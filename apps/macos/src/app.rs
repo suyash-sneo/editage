@@ -48,6 +48,9 @@ use crate::welcome_window::WelcomeWindow;
 /// How the Security Inspector describes the spelling checker on macOS.
 pub const SPELLING_SERVICE: &str = "the macOS spelling service on this Mac";
 
+/// How the Security Inspector describes find-bar search text on macOS.
+pub const FIND_TEXT: &str = "Text typed into the find bar may be shared by macOS with other apps through the system find pasteboard. This app does not record it.";
+
 thread_local! {
     static APP: RefCell<Option<Rc<App>>> = const { RefCell::new(None) };
     static DEFERRED: RefCell<VecDeque<Box<dyn FnOnce()>>> = RefCell::new(VecDeque::new());
@@ -82,7 +85,11 @@ pub struct App {
     inspector: RefCell<Option<Rc<SecurityInspector>>>,
     diagnostics_window: RefCell<Option<Rc<DiagnosticsWindow>>>,
     last_activity: Cell<Instant>,
+    last_main_document: Cell<Option<DocumentId>>,
+    /// Files currently being read in the background by `open_path`.
+    opening: RefCell<std::collections::HashSet<PathBuf>>,
     quit_requested: Cell<bool>,
+    reopen_list_recorded_for_quit: Cell<bool>,
     pub menu_bag: TargetBag,
     timer: RefCell<Option<Retained<NSTimer>>>,
     event_monitor: RefCell<Option<Retained<AnyObject>>>,
@@ -104,7 +111,10 @@ impl App {
             inspector: RefCell::new(None),
             diagnostics_window: RefCell::new(None),
             last_activity: Cell::new(Instant::now()),
+            last_main_document: Cell::new(None),
+            opening: RefCell::new(std::collections::HashSet::new()),
             quit_requested: Cell::new(false),
+            reopen_list_recorded_for_quit: Cell::new(false),
             menu_bag: TargetBag::default(),
             timer: RefCell::new(None),
             event_monitor: RefCell::new(None),
@@ -206,6 +216,12 @@ impl App {
             document.focus();
             return;
         }
+        // Opening happens in the background; a second request for the same
+        // file while the first is still being read is ignored.
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if !self.opening.borrow_mut().insert(key.clone()) {
+            return;
+        }
         let policy = self.preferences().default_passphrase_policy;
         let diagnostics = self.diagnostics.clone();
         let path_for_report = path.clone();
@@ -213,6 +229,7 @@ impl App {
             move || open_encrypted_document(&path, policy, diagnostics),
             move |result| {
                 let app = app();
+                app.opening.borrow_mut().remove(&key);
                 match result {
                     Ok(session) => {
                         let document = DocumentWindow::from_locked_session(session, app.mtm);
@@ -317,14 +334,35 @@ impl App {
         }
     }
 
-    pub fn application_facts<R>(&self, use_facts: impl FnOnce(ApplicationFacts<'_>) -> R) -> R {
+    pub fn application_facts<R>(
+        &self,
+        staging_files_on_disk: &[PathBuf],
+        use_facts: impl FnOnce(ApplicationFacts<'_>) -> R,
+    ) -> R {
         let clipboard = self.clipboard_status();
         let preferences = self.preferences();
         use_facts(ApplicationFacts {
             preferences: &preferences,
             clipboard,
             spelling_service_description: SPELLING_SERVICE,
+            staging_files_on_disk,
+            find_text_description: Some(FIND_TEXT),
         })
+    }
+
+    /// The document the Security Inspector describes: the main window's
+    /// document, or, when an auxiliary window (such as Diagnostics) is main,
+    /// the document window that was main most recently.
+    pub fn inspected_document(&self) -> Option<Rc<DocumentWindow>> {
+        self.key_document().or_else(|| {
+            let id = self.last_main_document.get()?;
+            self.document(id)
+        })
+    }
+
+    pub fn note_main_document(&self, id: DocumentId) {
+        self.last_main_document.set(Some(id));
+        self.refresh_inspector();
     }
 
     // ----- Auxiliary windows ------------------------------------------------
@@ -459,9 +497,45 @@ impl App {
 
     pub fn cancel_quit(&self) {
         self.quit_requested.set(false);
+        self.reopen_list_recorded_for_quit.set(false);
+        self.remember_open_documents();
+    }
+
+    /// Editage → Quit (⌘Q). Dismisses sheets that hold no unsaved work,
+    /// records the documents to reopen while they are all still open, then
+    /// asks AppKit to terminate (which reviews unsaved changes).
+    pub fn quit(&self) {
+        for document in self.documents() {
+            let (saving, dirty) = {
+                let session = document.session();
+                (session.is_saving(), session.has_unsaved_changes())
+            };
+            if !saving && !dirty {
+                document.dismiss_sheets_for_quit();
+            }
+        }
+        self.remember_open_documents_at_quit();
+        self.reopen_list_recorded_for_quit.set(true);
+        let mtm = self.mtm;
+        defer_on_main_thread(Box::new(move || {
+            NSApplication::sharedApplication(mtm).terminate(None);
+        }));
     }
 
     fn should_terminate(&self) -> NSApplicationTerminateReply {
+        // AppKit refuses to terminate while a sheet is attached. Sheets on
+        // documents with nothing unsaved (unlock sheets on locked documents,
+        // notices) are dismissed so quitting is never blocked by them;
+        // documents with unsaved changes go through the save review below.
+        for document in self.documents() {
+            let (saving, dirty) = {
+                let session = document.session();
+                (session.is_saving(), session.has_unsaved_changes())
+            };
+            if !saving && !dirty {
+                document.dismiss_sheets_for_quit();
+            }
+        }
         let needs_review = self.documents().into_iter().find(|document| {
             let session = document.session();
             session.is_saving() || session.has_unsaved_changes()
@@ -478,7 +552,11 @@ impl App {
     }
 
     fn will_terminate(&self) {
-        self.remember_open_documents_at_quit();
+        // When quitting via Editage → Quit the list was recorded before the
+        // save review closed any documents; don't overwrite it now.
+        if !self.reopen_list_recorded_for_quit.get() {
+            self.remember_open_documents_at_quit();
+        }
         // A clipboard item scheduled for clearing would otherwise outlive
         // the app. Clear it now, but only if it is still our item.
         if self.preferences().clipboard_clear != ClipboardClearPolicy::Never {
@@ -564,6 +642,15 @@ define_class!(
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _notification: &NSNotification) {
             app().will_terminate();
+        }
+
+        #[unsafe(method(applicationDidBecomeActive:))]
+        fn did_become_active(&self, _notification: &NSNotification) {
+            // Returning to the app is when another program is most likely to
+            // have changed an open file.
+            if let Some(document) = app().inspected_document() {
+                document.check_for_external_change();
+            }
         }
 
         #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]

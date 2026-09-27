@@ -561,7 +561,7 @@ fn check_destination(
             OriginalFileState::ChangedByAnotherProgram,
         )),
         (DestinationExpectation::UnchangedSince { fingerprint }, Some(snapshot)) => {
-            if snapshot.is_symbolic_link {
+            if snapshot.is_symbolic_link || !snapshot.is_regular_file {
                 return Err((
                     EditorError::NotARegularFile {
                         path: destination.to_owned(),
@@ -592,7 +592,7 @@ fn check_destination(
         }
         (DestinationExpectation::UserChoseDestination, None) => Ok(None),
         (DestinationExpectation::UserChoseDestination, Some(snapshot)) => {
-            if snapshot.is_symbolic_link {
+            if snapshot.is_symbolic_link || !snapshot.is_regular_file {
                 return Err((
                     EditorError::NotARegularFile {
                         path: destination.to_owned(),

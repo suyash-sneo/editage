@@ -16,6 +16,11 @@ use crate::clipboard::ClipboardClearPolicy;
 use crate::document::PassphrasePolicy;
 
 pub const RECENT_DOCUMENTS_LIMIT: usize = 10;
+
+/// Continuous spell checking is paused for documents larger than this
+/// (UTF-8 bytes). The system spelling service re-checks the whole text and
+/// can stall the editor for minutes on multi-megabyte documents.
+pub const SPELL_CHECK_MAX_BYTES: usize = 1_000_000;
 pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<u32> = 9..=36;
 pub const FONT_SIZE_CHOICES: [u32; 9] = [11, 12, 13, 14, 15, 16, 18, 20, 24];
 pub const INACTIVITY_LOCK_CHOICES_MINUTES: [Option<u32>; 4] = [None, Some(5), Some(15), Some(30)];
@@ -212,6 +217,11 @@ impl Preferences {
         }
     }
 
+    /// Whether spell checking actually runs for a document of this size.
+    pub fn spell_checking_active(&self, document_bytes: usize) -> bool {
+        self.check_spelling_while_typing && document_bytes <= SPELL_CHECK_MAX_BYTES
+    }
+
     pub fn lock_after_inactivity(&self) -> Option<Duration> {
         self.lock_after_inactivity_minutes
             .map(|minutes| Duration::from_secs(u64::from(minutes) * 60))
@@ -246,7 +256,13 @@ impl Preferences {
     /// the user allows it.
     pub fn set_open_documents(&mut self, paths: Vec<PathBuf>) {
         self.documents_to_reopen = if self.reopen_documents_at_launch {
-            paths
+            let mut unique = Vec::new();
+            for path in paths {
+                if !unique.contains(&path) {
+                    unique.push(path);
+                }
+            }
+            unique
         } else {
             Vec::new()
         };
@@ -310,6 +326,18 @@ mod tests {
         let stored: HashMap<&str, String> = preferences.to_entries().into_iter().collect();
         let restored = Preferences::from_entries(|key| stored.get(key).cloned());
         assert_eq!(restored, preferences);
+    }
+
+    #[test]
+    fn spell_checking_pauses_for_large_documents() {
+        let preferences = Preferences::default();
+        assert!(preferences.spell_checking_active(SPELL_CHECK_MAX_BYTES));
+        assert!(!preferences.spell_checking_active(SPELL_CHECK_MAX_BYTES + 1));
+        let off = Preferences {
+            check_spelling_while_typing: false,
+            ..Preferences::default()
+        };
+        assert!(!off.spell_checking_active(10));
     }
 
     #[test]

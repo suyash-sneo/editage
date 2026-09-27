@@ -452,6 +452,11 @@ impl ExternalCheckJob {
         }
         let status = match storage.inspect_destination(&self.path) {
             Ok(None) => ExternalChangeStatus::Missing { detected_at: now },
+            // A folder, link or other non-file now at the path: the document
+            // file is no longer there.
+            Ok(Some(snapshot)) if snapshot.is_symbolic_link || !snapshot.is_regular_file => {
+                ExternalChangeStatus::Missing { detected_at: now }
+            }
             Ok(Some(snapshot)) if snapshot.fingerprint == self.expected_fingerprint => {
                 ExternalChangeStatus::Unchanged { checked_at: now }
             }
@@ -1191,13 +1196,20 @@ impl DocumentSession {
             ExternalChangeStatus::Changed { .. } | ExternalChangeStatus::Missing { .. }
         ) && !was_known;
         if newly_changed {
+            let event = match outcome.status {
+                ExternalChangeStatus::Missing { .. } => DiagnosticEvent::ExternalFileMissing,
+                _ => DiagnosticEvent::ExternalChangeDetected,
+            };
+            self.diagnostics.record(&self.display_name, event);
+        }
+        // "Unchanged" means the file on disk is again exactly the version this
+        // application last read or wrote (same fingerprint), so a previously
+        // detected change no longer applies.
+        if was_known && matches!(outcome.status, ExternalChangeStatus::Unchanged { .. }) {
             self.diagnostics
-                .record(&self.display_name, DiagnosticEvent::ExternalChangeDetected);
+                .record(&self.display_name, DiagnosticEvent::ExternalChangeResolved);
         }
-        // Once a change is known, a later quick check must not hide it.
-        if !(was_known && matches!(outcome.status, ExternalChangeStatus::Unchanged { .. })) {
-            self.external_change = outcome.status;
-        }
+        self.external_change = outcome.status;
         newly_changed
     }
 

@@ -187,7 +187,16 @@ pub fn install_main_menu(app_ref: &Rc<App>) {
     );
     b.standard(&app_menu, "Show All", sel!(unhideAllApplications:), "", "");
     b.separator(&app_menu);
-    b.standard(&app_menu, "Quit Editage", sel!(terminate:), "q", "⌘");
+    // Quit goes through Editage first: AppKit's `terminate:` silently does
+    // nothing while any window has a sheet attached (e.g. an unlock sheet).
+    b.command(
+        &app_menu,
+        "Quit Editage",
+        "q",
+        "⌘",
+        || app().quit(),
+        |_| true,
+    );
     b.add_submenu(&bar, "Editage", &app_menu);
 
     // File

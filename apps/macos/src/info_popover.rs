@@ -3,6 +3,8 @@
 
 use std::rc::Rc;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use editage_core::document::FileBinding;
 use objc2::rc::Retained;
 use objc2::MainThreadOnly;
@@ -44,13 +46,20 @@ impl InfoPopover {
         controller.setView(&this.content);
         this.popover.setContentViewController(Some(&controller));
         this.popover.setBehavior(NSPopoverBehavior::Transient);
+        this.content.layoutSubtreeIfNeeded();
         this.popover.setContentSize(this.content.fittingSize());
 
         // Anchor near the toolbar's Info button at the top-right corner.
         if let Some(view) = document.window().contentView() {
             let bounds = view.bounds();
+            // The top edge is y = 0 in a flipped view, y = height otherwise.
+            let top = if view.isFlipped() {
+                0.0
+            } else {
+                bounds.size.height - 2.0
+            };
             let anchor = NSRect::new(
-                NSPoint::new(bounds.size.width - 40.0, bounds.size.height - 2.0),
+                NSPoint::new(bounds.size.width - 40.0, top),
                 NSSize::new(20.0, 2.0),
             );
             this.popover
@@ -77,6 +86,7 @@ impl InfoPopover {
         }
         self.bag.clear();
         self.fill(document);
+        self.content.layoutSubtreeIfNeeded();
         self.popover.setContentSize(self.content.fittingSize());
     }
 
@@ -91,7 +101,8 @@ impl InfoPopover {
             let text = document.editor().plaintext_for_saving();
             let text = text.as_str();
             (
-                text.chars().count(),
+                // User-perceived characters (grapheme clusters), so 👍🏽 is one.
+                text.graphemes(true).count(),
                 text.split_whitespace().count(),
                 text.split('\n').count(),
             )
@@ -104,7 +115,14 @@ impl InfoPopover {
                     .as_ref()
                     .map(|identity| format_date_time(identity.modified))
                     .unwrap_or_else(|| "—".to_owned()),
-                format_bytes(file.ciphertext_bytes),
+                match session.external_change() {
+                    editage_core::document::ExternalChangeStatus::Changed { .. }
+                    | editage_core::document::ExternalChangeStatus::Missing { .. } => format!(
+                        "{} when last read (changed on disk since)",
+                        format_bytes(file.ciphertext_bytes)
+                    ),
+                    _ => format_bytes(file.ciphertext_bytes),
+                },
             ),
         };
         let rows = vec![

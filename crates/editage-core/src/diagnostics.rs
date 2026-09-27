@@ -38,6 +38,8 @@ pub enum DiagnosticEvent {
     CleanupFailed { path: PathBuf },
     StagingFileRemovedOnRetry { path: PathBuf },
     ExternalChangeDetected,
+    ExternalFileMissing,
+    ExternalChangeResolved,
     ExternalCheckFoundNoChange,
     Locked,
     AutoLockPostponedUnsavedChanges,
@@ -106,6 +108,12 @@ impl DiagnosticEvent {
                 format!("Staging file removed: {}", path.display())
             }
             DiagnosticEvent::ExternalChangeDetected => "File changed on disk externally".to_owned(),
+            DiagnosticEvent::ExternalFileMissing => {
+                "File no longer at its path (moved, deleted or replaced)".to_owned()
+            }
+            DiagnosticEvent::ExternalChangeResolved => {
+                "File on disk matches this app's last version again".to_owned()
+            }
             DiagnosticEvent::ExternalCheckFoundNoChange => {
                 "Checked file on disk: unchanged".to_owned()
             }

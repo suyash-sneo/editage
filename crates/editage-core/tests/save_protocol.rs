@@ -572,3 +572,24 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         .windows(needle.len())
         .any(|window| window == needle)
 }
+
+#[test]
+fn destination_replaced_by_a_directory_is_refused_and_reported_as_changed_elsewhere() {
+    let fixture = fixture_document("replaced.txt.age");
+    let (mut session, _) =
+        open_and_unlock(&fixture.path, PASSPHRASE, PassphrasePolicy::KeepUntilLocked);
+    fs::remove_file(&fixture.path).unwrap();
+    fs::create_dir(&fixture.path).unwrap();
+    let failure = save_with(
+        &mut session,
+        &FileSystemStorage,
+        SaveTarget::CurrentFile,
+        SaveCredential::Retained,
+        "x",
+    )
+    .expect_err("refused");
+    assert_eq!(failure.stage, SaveStage::CheckingDestination);
+    assert!(matches!(failure.error, EditorError::NotARegularFile { .. }));
+    assert_eq!(failure.original, OriginalFileState::ChangedByAnotherProgram);
+    assert!(fixture.path.is_dir());
+}

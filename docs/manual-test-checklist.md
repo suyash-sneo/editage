@@ -66,7 +66,7 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       password." and the file is unchanged.
 - [ ] New document (⌘N): the subtitle says "Not saved yet — exists only in
       memory". The first ⌘S shows the Save dialog (suggested name
-      "Untitled.txt"; ".age" is added), then "Create a password for “…”" with
+      "Untitled.txt", shown by the panel as "Untitled.age"; typing `notes.txt` saves `notes.txt.age`), then "Create a password for “…”" with
       Password and Confirm Password. Mismatched entries show "The passwords do
       not match."; fewer than 10 characters shows the short-password hint.
       "Encrypt and Save" creates a file that `age --decrypt` reads, with mode
@@ -138,7 +138,7 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       target. Saving updates the target; the link still works.
 - [ ] Opening a file with two hard links warns that the other links keep the
       previous encrypted version.
-- [ ] Opening a file larger than 10 MiB asks for confirmation first.
+- [ ] Opening a file larger than 10 MB asks for confirmation first; after unlocking, the editor stays responsive and the inspector says spell checking is paused.
 - [ ] A cloud placeholder (iCloud Drive or OneDrive file set to online-only)
       is refused with a request to download it first.
 - [ ] A file on a network share opens without a notice; the Security
@@ -203,8 +203,9 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
 
 - [ ] With Settings › General › "Reopen documents that were open" on, quit
       with documents open and relaunch: they reopen **locked**.
-- [ ] With it off (the default), nothing is reopened, and window positions are
-      the only trace of the previous session.
+- [ ] With it off (the default), nothing is reopened. What remains from the
+      previous session is window positions and, if "Show files in Open Recent"
+      is on, the recent-documents paths.
 - [ ] Turning off "Show files in Open Recent" (or "Remember recent documents"
       in the welcome window) empties File › Open Recent. File › Open Recent ›
       Clear Menu empties it without turning recording off.

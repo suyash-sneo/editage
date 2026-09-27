@@ -24,12 +24,12 @@ use sha2::{Digest, Sha256};
 use crate::error::EditorError;
 
 /// Above this ciphertext size the user is asked before the file is decrypted.
-pub const LARGE_DOCUMENT_WARNING_BYTES: u64 = 10 * 1024 * 1024;
+pub const LARGE_DOCUMENT_WARNING_BYTES: u64 = 10_000_000;
 
 /// Files above this size are refused. A single native text view holding
 /// hundreds of megabytes of text is impractical, and decrypting needs the
 /// whole ciphertext and the whole plaintext in memory at once.
-pub const MAXIMUM_DOCUMENT_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAXIMUM_DOCUMENT_BYTES: u64 = 500_000_000;
 
 /// Permissions for newly created encrypted files and staging files: readable
 /// and writable by the owner only.
@@ -99,6 +99,9 @@ pub struct DestinationSnapshot {
     /// choice, so the save refuses instead.
     pub writable: bool,
     pub is_symbolic_link: bool,
+    /// False for a directory, a symbolic link, or any other non-file. Its
+    /// contents are then not read, and a save refuses to replace it.
+    pub is_regular_file: bool,
 }
 
 /// How far the operating system was asked to push the staging file towards
@@ -176,13 +179,23 @@ impl StorageBackend for FileSystemStorage {
             Err(error) => return Err(error),
         };
         let is_symbolic_link = link_metadata.file_type().is_symlink();
-        let metadata = fs::metadata(path)?;
+        let is_regular_file = link_metadata.file_type().is_file();
+        if !is_regular_file {
+            return Ok(Some(DestinationSnapshot {
+                identity: FileIdentity::from_metadata(&link_metadata),
+                fingerprint: CiphertextFingerprint::of(&[]),
+                writable: false,
+                is_symbolic_link,
+                is_regular_file,
+            }));
+        }
         let contents = fs::read(path)?;
         Ok(Some(DestinationSnapshot {
-            identity: FileIdentity::from_metadata(&metadata),
+            identity: FileIdentity::from_metadata(&link_metadata),
             fingerprint: CiphertextFingerprint::of(&contents),
             writable: is_writable_by_this_process(path),
             is_symbolic_link,
+            is_regular_file,
         }))
     }
 
@@ -504,6 +517,43 @@ pub fn staging_path_for(destination: &Path) -> io::Result<PathBuf> {
 #[cfg(any(test, feature = "test-support"))]
 pub use fault_injection::*;
 
+/// Finds files beside `destination` whose names match this application's
+/// staging-file pattern (`.<name>.<16 hex digits>.tmp`). Used so the
+/// inspector reports staging files that actually exist on disk, including
+/// ones left by an earlier session that was interrupted. Such files contain
+/// ciphertext only.
+pub fn find_staging_files(destination: &Path) -> Vec<PathBuf> {
+    let Some(folder) = destination.parent() else {
+        return Vec::new();
+    };
+    let Some(file_name) = destination
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+    else {
+        return Vec::new();
+    };
+    let prefix = format!(".{file_name}.");
+    let Ok(entries) = fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(middle) = name
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(".tmp"))
+            else {
+                return false;
+            };
+            middle.len() == 16 && middle.chars().all(|c| c.is_ascii_hexdigit())
+        })
+        .map(|entry| entry.path())
+        .collect();
+    found.sort();
+    found
+}
+
 #[cfg(any(test, feature = "test-support"))]
 mod fault_injection {
     //! A storage backend for tests that fails at one chosen operation.
@@ -653,6 +703,18 @@ mod tests {
         assert!(name.starts_with(".passwords.txt.age."));
         assert!(name.ends_with(".tmp"));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn staging_files_are_found_by_name_pattern_only() {
+        let folder = tempfile::tempdir().unwrap();
+        let destination = folder.path().join("notes.txt.age");
+        fs::write(&destination, b"x").unwrap();
+        let staging = staging_path_for(&destination).unwrap();
+        fs::write(&staging, b"x").unwrap();
+        fs::write(folder.path().join(".notes.txt.age.nothex.tmp"), b"x").unwrap();
+        fs::write(folder.path().join(".other.age.0123456789ABCDEF.tmp"), b"x").unwrap();
+        assert_eq!(find_staging_files(&destination), vec![staging]);
     }
 
     #[test]

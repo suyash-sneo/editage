@@ -129,6 +129,11 @@ pub fn details_grid(
         .map(|(label, value)| {
             let key = key_label(label, mtm);
             let value = value_label(value, value_width, mtm);
+            // A fixed column width lets long values wrap instead of being cut.
+            value
+                .widthAnchor()
+                .constraintEqualToConstant(value_width)
+                .setActive(true);
             NSArray::from_retained_slice(&[
                 Retained::into_super(Retained::into_super(key)),
                 Retained::into_super(Retained::into_super(value)),

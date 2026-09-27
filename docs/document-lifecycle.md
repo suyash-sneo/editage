@@ -239,7 +239,7 @@ password is asked for before the file is decrypted again.
    only in memory; the window subtitle says "Not saved yet — exists only in
    memory". Nothing is written until the first save.
 2. On the first save, `save_credential_need` returns `AskForNewPassphrase`.
-   The macOS frontend shows the Save dialog (suggested name "Untitled.txt";
+   The macOS frontend shows the Save dialog (suggested name "Untitled.txt", which the panel shows as "Untitled.age";
    ".age" is appended if missing, and an existing file under the appended name
    is replaced only after confirmation), then the sheet "Create a password for
    “…”" with Password and Confirm Password fields and an "Encrypt and Save"
@@ -266,6 +266,11 @@ The session is **rebound to the new path only after the save commits**. If
 Save As fails, the document stays bound to its original file, which is
 untouched. After a successful Save As, the original file stays as it was on
 disk, and later saves go to the new file.
+
+In the macOS frontend, "Try Again" on a save-failure sheet repeats exactly the
+operation that failed: a failed Save As is retried to the same chosen path
+(never silently as a save over the original), and a failed password change
+asks for the new password again.
 
 Save As to the document's own path is treated as a normal save, with the
 external-change check.

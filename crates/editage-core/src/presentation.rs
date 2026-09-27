@@ -144,6 +144,14 @@ pub fn save_failure_report(failure: &SaveFailure, session: &DocumentSession) -> 
             vec!["Nothing was written. Your edits are still open in memory.".to_owned()],
             vec![FailureAction::TryAgain, FailureAction::Cancel],
         ),
+        EditorError::NotARegularFile { .. } => (
+            "The document could not be saved.".to_owned(),
+            vec![
+                format!("{name} has been replaced by a folder, a link or another non-file item, so it was not overwritten."),
+                "Nothing was written. Your edits are still open in memory.".to_owned(),
+            ],
+            vec![FailureAction::SaveAs, FailureAction::Cancel],
+        ),
         EditorError::DestinationReadOnly { .. } => (
             "The document could not be saved.".to_owned(),
             vec![
@@ -337,8 +345,8 @@ pub fn open_failure_report(path: &Path, error: &EditorError) -> FailureReport {
         ],
         EditorError::FileTooLarge { bytes, limit, .. } => vec![format!(
             "It is {} MB. Documents larger than {} MB cannot be opened in this version.",
-            bytes / (1024 * 1024),
-            limit / (1024 * 1024)
+            bytes / 1_000_000,
+            limit / 1_000_000
         )],
         EditorError::UnsupportedFormat { detected } => vec![format!(
             "It is not an age encrypted file. Detected: {detected}."
@@ -391,7 +399,7 @@ pub fn open_notice_text(notice: &OpenNotice) -> NoticeText {
             title: "This encrypted document will decrypt to a large text buffer.".to_owned(),
             message: vec![format!(
                 "It is {:.1} MB on disk. Continue opening it?",
-                *bytes as f64 / (1024.0 * 1024.0)
+                *bytes as f64 / 1_000_000.0
             )],
             confirm_button: "Continue",
         },
@@ -422,7 +430,8 @@ pub fn lock_reason_text(reason: LockReason) -> Option<String> {
                 .to_owned(),
         ),
         LockReason::Inactivity { minutes } => Some(format!(
-            "Locked after {minutes} minutes of inactivity. The decrypted text was removed from the editor, its undo history was cleared, and any retained password was released."
+            "Locked after {} of inactivity. The decrypted text was removed from the editor, its undo history was cleared, and any retained password was released.",
+            crate::security_state::minutes_text(minutes)
         )),
     }
 }
@@ -430,17 +439,47 @@ pub fn lock_reason_text(reason: LockReason) -> Option<String> {
 /// The external-change conflict shown when a focus check finds a change.
 pub fn external_change_report(session: &DocumentSession) -> FailureReport {
     let name = format!("“{}”", session.display_name());
+    if matches!(
+        session.external_change(),
+        crate::document::ExternalChangeStatus::Missing { .. }
+    ) {
+        return FailureReport {
+            title: format!("{name} is no longer at its original location."),
+            message: vec![
+                "It may have been moved, renamed, deleted or replaced by a folder or link, or its disk may have been disconnected. Saving to this path is blocked so that nothing is recreated there without your choice."
+                    .to_owned(),
+                if session.has_unsaved_changes() {
+                    "Your unsaved edits are still open in memory. Use Save As… to save them.".to_owned()
+                } else {
+                    "The text is still open in memory. Use Save As… to save it elsewhere.".to_owned()
+                },
+            ],
+            details: session
+                .path()
+                .map(|path| vec![("Original path".to_owned(), path.display().to_string())])
+                .unwrap_or_default(),
+            actions: vec![FailureAction::SaveAs, FailureAction::Cancel],
+        };
+    }
     FailureReport {
         title: format!("{name} changed on disk while it was open."),
         message: vec![
-            "Saving now could overwrite a newer copy, so saving to this file is blocked.".to_owned(),
-            "You can reload the version on disk (your unsaved edits here would be discarded), or save your version as a separate file."
+            "Saving now could overwrite a newer copy, so saving to this file is blocked."
                 .to_owned(),
+            if session.has_unsaved_changes() {
+                "You can reload the version on disk (your unsaved edits here would be discarded), or save your version as a separate file.".to_owned()
+            } else {
+                "You can reload the version on disk (you have no unsaved edits here), or save this window's text as a separate file.".to_owned()
+            },
         ],
         details: session
             .path()
             .map(|path| vec![("File".to_owned(), path.display().to_string())])
             .unwrap_or_default(),
-        actions: vec![FailureAction::ReloadFromDisk, FailureAction::SaveAs, FailureAction::Cancel],
+        actions: vec![
+            FailureAction::ReloadFromDisk,
+            FailureAction::SaveAs,
+            FailureAction::Cancel,
+        ],
     }
 }

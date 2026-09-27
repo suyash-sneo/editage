@@ -20,13 +20,13 @@ use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use crate::app::app;
 use crate::controls::{
-    abbreviate_home, button, format_time, key_label, ns, pin_to_edges, secondary_label,
-    section_heading, small_button, small_label, title_label, value_label, vstack, FlippedView,
-    TargetBag,
+    abbreviate_home, button, format_time, ns, pin_to_edges, secondary_label, section_heading,
+    small_button, small_label, title_label, value_label, vstack, FlippedView, TargetBag,
 };
 
-const WIDTH: f64 = 460.0;
-const VALUE_WIDTH: f64 = 270.0;
+const WIDTH: f64 = 500.0;
+const VALUE_WIDTH: f64 = 290.0;
+const LABEL_WIDTH: f64 = 150.0;
 
 pub struct SecurityInspector {
     mtm: MainThreadMarker,
@@ -104,7 +104,7 @@ impl SecurityInspector {
             return;
         }
         let application = app();
-        let Some(document) = application.key_document() else {
+        let Some(document) = application.inspected_document() else {
             if force || !self.showing_empty.get() {
                 self.showing_empty.set(true);
                 *self.last_report.borrow_mut() = None;
@@ -112,8 +112,13 @@ impl SecurityInspector {
             }
             return;
         };
-        let report = application
-            .application_facts(|facts| inspect_document_state(&document.session(), facts));
+        let staging_files = document
+            .path()
+            .map(|path| editage_core::storage::find_staging_files(&path))
+            .unwrap_or_default();
+        let report = application.application_facts(&staging_files, |facts| {
+            inspect_document_state(&document.session(), facts)
+        });
         let unchanged = self.last_report.borrow().as_ref() == Some(&report);
         if unchanged && !force {
             return;
@@ -177,11 +182,19 @@ impl SecurityInspector {
 
     fn row(&self, label: &str, value: &str, needs_attention: bool) -> Retained<NSStackView> {
         let mtm = self.mtm;
-        let key = key_label(label, mtm);
+        // Labels wrap rather than truncate ("Disk file changed externally").
+        let key = crate::controls::wrapping_label(label, LABEL_WIDTH, mtm);
+        key.setAlignment(objc2_app_kit::NSTextAlignment::Right);
+        key.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        key.setFont(Some(&objc2_app_kit::NSFont::systemFontOfSize(12.0)));
         key.widthAnchor()
-            .constraintEqualToConstant(140.0)
+            .constraintEqualToConstant(LABEL_WIDTH)
             .setActive(true);
         let value = value_label(value, VALUE_WIDTH, mtm);
+        value
+            .widthAnchor()
+            .constraintEqualToConstant(VALUE_WIDTH)
+            .setActive(true);
         if needs_attention {
             value.setTextColor(Some(&NSColor::systemOrangeColor()));
         }
@@ -301,7 +314,7 @@ impl SecurityInspector {
 }
 
 fn with_document(action: impl Fn(&Rc<crate::document_window::DocumentWindow>)) {
-    if let Some(document) = app().key_document() {
+    if let Some(document) = app().inspected_document() {
         action(&document);
     }
 }

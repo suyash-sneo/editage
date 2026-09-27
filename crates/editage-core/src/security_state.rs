@@ -78,6 +78,12 @@ pub struct ApplicationFacts<'a> {
     /// Name of the platform's spelling service, e.g. "the macOS spelling
     /// service on this Mac".
     pub spelling_service_description: &'a str,
+    /// Staging files that currently exist beside the document, as found by
+    /// `storage::find_staging_files` (empty for a never-saved document).
+    pub staging_files_on_disk: &'a [PathBuf],
+    /// How the platform's find feature handles search text, if it shares it
+    /// outside the application (macOS: the system find pasteboard).
+    pub find_text_description: Option<&'a str>,
 }
 
 fn row(label: &'static str, text: impl Into<String>) -> ReportRow {
@@ -157,15 +163,28 @@ pub fn inspect_document_state(
             on_disk.push(row("Plaintext application files", "None"));
         }
         FileBinding::OnDisk(file) => {
-            on_disk.push(row(
-                "Original file",
-                format!("Encrypted ({} bytes)", group_digits(file.ciphertext_bytes)),
-            ));
+            on_disk.push(match session.external_change() {
+                ExternalChangeStatus::Missing { .. } => attention(
+                    "Original file",
+                    "No longer at this path (moved, deleted or replaced)",
+                ),
+                ExternalChangeStatus::Changed { .. } => attention(
+                    "Original file",
+                    format!(
+                        "Encrypted, but changed by another program since this app last read it (was {} bytes)",
+                        group_digits(file.ciphertext_bytes)
+                    ),
+                ),
+                _ => row(
+                    "Original file",
+                    format!("Encrypted ({} bytes)", group_digits(file.ciphertext_bytes)),
+                ),
+            });
             on_disk.push(row("Plaintext application files", "None"));
             if let Some(folder) = file.path.parent() {
                 on_disk.push(path_row("Save staging directory", folder.to_owned()));
             }
-            on_disk.push(staging_row(session));
+            on_disk.push(staging_row(session, facts.staging_files_on_disk));
             on_disk.push(external_change_row(session.external_change()));
             for notice in &file.notices {
                 if let Some(notice_row) = notice_row(notice) {
@@ -216,6 +235,13 @@ pub fn inspect_document_state(
         "Spelling checker",
         if !unlocked {
             "Not in use (document locked)".to_owned()
+        } else if facts.preferences.check_spelling_while_typing
+            && !facts.preferences.spell_checking_active(match session.plaintext_presence() {
+                PlaintextPresence::InEditor { bytes } => bytes,
+                PlaintextPresence::NoPlaintext => 0,
+            })
+        {
+            "Paused for this document: it is larger than 1 MB, which the spelling service cannot check without stalling the editor".to_owned()
         } else if facts.preferences.check_spelling_while_typing {
             format!(
                 "On — text is checked by {}",
@@ -225,6 +251,9 @@ pub fn inspect_document_state(
             "Off".to_owned()
         },
     ));
+    if let Some(description) = facts.find_text_description {
+        in_memory.push(row("Find text", description));
+    }
     sections.push(ReportSection {
         title: "In memory",
         rows: in_memory,
@@ -282,35 +311,39 @@ pub fn inspect_document_state(
     }
 }
 
-fn staging_row(session: &DocumentSession) -> ReportRow {
+fn staging_row(session: &DocumentSession, on_disk: &[PathBuf]) -> ReportRow {
     let leftovers = session.leftover_staging_files();
-    if let Some(leftover) = leftovers.first() {
+    let mut lines: Vec<String> = Vec::new();
+    for leftover in leftovers {
         let context = if leftover.save_committed {
-            "left after a successful save (encrypted data only)"
+            "left after a successful save"
         } else {
-            "left after a failed save (encrypted data only)"
+            "left after a failed save"
         };
-        return ReportRow {
-            label: "Staging files",
-            value: ReportValue::Text(format!(
-                "{} — {context}{}",
-                leftover.path.display(),
-                if leftovers.len() > 1 {
-                    format!(" (and {} more)", leftovers.len() - 1)
-                } else {
-                    String::new()
-                }
-            )),
-            needs_attention: true,
-        };
+        lines.push(format!("{} — {context}", leftover.path.display()));
     }
-    if session.is_saving() {
-        row(
-            "Staging files",
-            "A save is in progress; an encrypted staging file may exist beside the document",
-        )
-    } else {
-        row("Staging files", "None currently")
+    for path in on_disk {
+        if leftovers.iter().any(|leftover| &leftover.path == path) {
+            continue;
+        }
+        let context = if session.is_saving() {
+            "being written by the current save"
+        } else {
+            "found beside the document with this app's staging-file name; possibly left by an interrupted save"
+        };
+        lines.push(format!("{} — {context}", path.display()));
+    }
+    if lines.is_empty() {
+        return row("Staging files", "None found beside the document");
+    }
+    let saving_only = session.is_saving() && leftovers.is_empty();
+    ReportRow {
+        label: "Staging files",
+        value: ReportValue::Text(format!(
+            "{} (this app writes only encrypted data to staging files)",
+            lines.join("; ")
+        )),
+        needs_attention: !saving_only,
     }
 }
 
@@ -453,17 +486,31 @@ fn durability_row(file: &FileDurability, directory: &DirectoryDurability) -> Rep
 fn auto_lock_row(session: &DocumentSession, preferences: &Preferences) -> ReportRow {
     match preferences.lock_after_inactivity_minutes {
         None => row("Auto-lock", "Off"),
+        Some(_) if !session.is_unlocked() => {
+            row("Auto-lock", "Not active while the document is locked")
+        }
         Some(_) if session.is_never_saved() => {
             row("Auto-lock", "Not applicable until the document is saved")
         }
         Some(minutes) if session.auto_lock_postponed() => attention(
             "Auto-lock",
-            format!("Postponed: unsaved changes (after {minutes} minutes of inactivity)"),
+            format!(
+                "Postponed: unsaved changes (after {} of inactivity)",
+                minutes_text(minutes)
+            ),
         ),
         Some(minutes) => row(
             "Auto-lock",
-            format!("After {minutes} minutes of inactivity"),
+            format!("After {} of inactivity", minutes_text(minutes)),
         ),
+    }
+}
+
+pub(crate) fn minutes_text(minutes: u32) -> String {
+    if minutes == 1 {
+        "1 minute".to_owned()
+    } else {
+        format!("{minutes} minutes")
     }
 }
 
@@ -488,10 +535,17 @@ fn actions(session: &DocumentSession, facts: &ApplicationFacts<'_>) -> Vec<Inspe
         },
         InspectorAction::ViewDiagnostics,
     ];
-    if let Some(leftover) = session.leftover_staging_files().first() {
-        actions.push(InspectorAction::RevealStagingFile {
-            path: leftover.path.clone(),
-        });
+    let first_staging = session
+        .leftover_staging_files()
+        .first()
+        .map(|leftover| leftover.path.clone())
+        .or_else(|| facts.staging_files_on_disk.first().cloned());
+    if let Some(path) = first_staging {
+        if !session.is_saving() {
+            actions.push(InspectorAction::RevealStagingFile { path });
+        }
+    }
+    if !session.leftover_staging_files().is_empty() {
         actions.push(InspectorAction::RetryCleanup);
     }
     actions
@@ -523,6 +577,8 @@ mod tests {
                 preferences: &preferences,
                 clipboard: ClipboardStatus::NotTracked,
                 spelling_service_description: "the system spelling service",
+                staging_files_on_disk: &[],
+                find_text_description: None,
             },
         );
         assert_eq!(

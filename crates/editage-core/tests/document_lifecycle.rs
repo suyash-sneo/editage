@@ -550,3 +550,17 @@ fn debug_formatting_a_session_does_not_dump_the_passphrase() {
     assert!(!printed.contains("username: example"));
     assert!(printed.contains("redacted"));
 }
+
+#[test]
+fn a_file_that_disappeared_is_reported_as_missing_without_offering_reload() {
+    use editage_core::presentation::{external_change_report, FailureAction};
+    let (_folder, path) = document_on_disk();
+    let (mut session, _) = open_and_unlock(&path, PASSPHRASE, PassphrasePolicy::KeepUntilLocked);
+    std::fs::remove_file(&path).unwrap();
+    let job = session.begin_external_check().unwrap();
+    assert!(session.finish_external_check(job.run(&FileSystemStorage)));
+    let report = external_change_report(&session);
+    assert!(report.title.contains("no longer at its original location"));
+    assert!(!report.actions.contains(&FailureAction::ReloadFromDisk));
+    assert!(report.actions.contains(&FailureAction::SaveAs));
+}

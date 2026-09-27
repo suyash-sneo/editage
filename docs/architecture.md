@@ -157,7 +157,7 @@ Reading encrypted files, and the narrow filesystem interface the save
 transaction uses.
 
 - `read_encrypted_file` resolves symbolic links, refuses non-regular files,
-  cloud placeholders and files over 512 MiB, reads the ciphertext, and records
+  cloud placeholders and files over 500 MB, reads the ciphertext, and records
   the file's identity (device, inode, size, modification time, mode, link
   count), a SHA-256 fingerprint of the ciphertext, and facts about the volume.
   It returns `OpenNotice`s for things the user should know before editing:
@@ -317,6 +317,7 @@ on that system.
 | `block2` 0.6 | Objective-C blocks, used as completion handlers for sheets and panels. |
 | `dispatch2` 0.3 | Grand Central Dispatch, to run jobs on a background queue and return results to the main queue. |
 | `objc2-uniform-type-identifiers` 0.3 | `UTType`, to restrict the Open and Save panels to `.age` files. |
+| `unicode-segmentation` 1 | Counting user-perceived characters (grapheme clusters) in the Info popover. |
 
 These are only compiled on macOS (`[target.'cfg(target_os = "macos")'.dependencies]`).
 

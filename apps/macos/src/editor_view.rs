@@ -153,7 +153,12 @@ impl EditorTextView {
     }
 
     /// Applies font, wrapping and spelling preferences.
-    pub fn apply_preferences(&self, preferences: &Preferences, scroll_view: &NSScrollView) {
+    pub fn apply_preferences(
+        &self,
+        preferences: &Preferences,
+        scroll_view: &NSScrollView,
+        document_bytes: usize,
+    ) {
         let size = f64::from(preferences.font_size);
         let font = match preferences.font {
             // SAFETY: NSFontWeightRegular is a valid weight constant.
@@ -183,7 +188,7 @@ impl EditorTextView {
             }
         }
 
-        self.setContinuousSpellCheckingEnabled(preferences.check_spelling_while_typing);
+        self.setContinuousSpellCheckingEnabled(preferences.spell_checking_active(document_bytes));
         self.set_wrapping(preferences.wrap_lines, scroll_view);
     }
 

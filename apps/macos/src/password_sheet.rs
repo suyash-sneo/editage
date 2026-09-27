@@ -74,7 +74,8 @@ impl UnlockSheet {
     /// Shows or hides the "Decrypting…" state and disables input meanwhile.
     pub fn set_busy(&self, busy: bool) {
         self.field.setEnabled(!busy);
-        self.unlock_button.setEnabled(!busy);
+        self.unlock_button
+            .setEnabled(!busy && !field_is_empty(&self.field));
         self.remember.setEnabled(!busy);
         self.spinner.setHidden(!busy);
         if busy {

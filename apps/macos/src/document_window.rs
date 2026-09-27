@@ -53,6 +53,14 @@ use crate::sheets::{
 };
 use crate::toolbar::{ToolbarDelegate, ToolbarItemSpec};
 
+/// A save operation as the user requested it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SaveAttempt {
+    CurrentFile,
+    ChosenPath(PathBuf),
+    ChangePassword,
+}
+
 /// What to do once a save completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AfterSave {
@@ -75,6 +83,10 @@ pub struct DocumentWindow {
     sheet: RefCell<Option<Rc<Sheet>>>,
     info: RefCell<Option<InfoPopover>>,
     after_save: Cell<AfterSave>,
+    /// The save operation last started, so "Try Again" repeats exactly that
+    /// operation (never silently a different one, such as saving over the
+    /// original after a failed Save As).
+    last_attempt: RefCell<Option<SaveAttempt>>,
     closing: Cell<bool>,
     checking_external: Cell<bool>,
     weak_self: RefCell<Weak<DocumentWindow>>,
@@ -165,6 +177,7 @@ impl DocumentWindow {
             sheet: RefCell::new(None),
             info: RefCell::new(None),
             after_save: Cell::new(AfterSave::Nothing),
+            last_attempt: RefCell::new(None),
             closing: Cell::new(false),
             checking_external: Cell::new(false),
             weak_self: RefCell::new(Weak::new()),
@@ -195,6 +208,7 @@ impl DocumentWindow {
         let close_target = self.weak();
         let key_target = self.weak();
         let will_close_id = self.id;
+        let main_id = self.id;
         let observer = WindowObserver::new(
             self.mtm,
             WindowObserverCallbacks {
@@ -207,7 +221,7 @@ impl DocumentWindow {
                         this.on_became_key();
                     }
                 })),
-                did_become_main: Some(Box::new(|| app().refresh_inspector())),
+                did_become_main: Some(Box::new(move || app().note_main_document(main_id))),
                 will_close: Some(Box::new(move || {
                     let id = will_close_id;
                     // Defer so AppKit finishes closing before the controller
@@ -293,8 +307,9 @@ impl DocumentWindow {
 
     pub fn apply_preferences(&self) {
         let preferences = app().preferences();
+        let bytes = self.editor.utf8_length();
         self.editor
-            .apply_preferences(&preferences, &self.scroll_view);
+            .apply_preferences(&preferences, &self.scroll_view, bytes);
         if let Some(toolbar) = self.window.toolbar() {
             toolbar.setVisible(preferences.show_toolbar);
         }
@@ -336,7 +351,16 @@ impl DocumentWindow {
                     }
                     _ if session.is_read_only() => "Read-only".to_owned(),
                     _ => match session.last_save() {
-                        Some(record) => format!("Saved locally at {}", format_time(record.at)),
+                        Some(record) => match session.binding() {
+                            // Reloaded from disk after this app's last save:
+                            // the text shown is the file's, not ours.
+                            editage_core::document::FileBinding::OnDisk(file)
+                                if file.last_synchronised > record.at =>
+                            {
+                                format!("Read from disk at {}", format_time(file.last_synchronised))
+                            }
+                            _ => format!("Saved locally at {}", format_time(record.at)),
+                        },
                         None if session.is_never_saved() => {
                             "Not saved yet — exists only in memory".to_owned()
                         }
@@ -365,6 +389,10 @@ impl DocumentWindow {
 
     fn on_edit(&self) {
         let bytes = self.editor.utf8_length();
+        let spelling = app().preferences().spell_checking_active(bytes);
+        if self.editor.isContinuousSpellCheckingEnabled() != spelling {
+            self.editor.setContinuousSpellCheckingEnabled(spelling);
+        }
         let was_modified = self.session.borrow().has_unsaved_changes();
         if self.session.borrow_mut().record_edit(bytes).is_ok() && !was_modified {
             self.changed();
@@ -518,9 +546,14 @@ impl DocumentWindow {
 
     /// Places decrypted text in the editor and drops the Rust copy.
     fn show_plaintext(&self, plaintext: Plaintext) {
+        // Turn spell checking off before inserting the text, then re-apply
+        // preferences for the new size, so a large document is never handed
+        // to the spelling service in full.
+        self.editor.setContinuousSpellCheckingEnabled(false);
         self.editor.load_plaintext(&plaintext);
         drop(plaintext);
         self.editor.clear_undo_history();
+        self.apply_preferences();
         self.scroll_view.setHidden(false);
     }
 
@@ -560,6 +593,7 @@ impl DocumentWindow {
             self.show_external_change();
             return;
         }
+        self.last_attempt.replace(Some(SaveAttempt::CurrentFile));
         match need {
             SaveCredentialNeed::UseRetained => {
                 self.start_save(SaveTarget::CurrentFile, SaveCredential::Retained)
@@ -596,58 +630,68 @@ impl DocumentWindow {
         };
         let weak = self.weak();
         self.run_save_panel(&suggested, move |path| {
-            let Some(this) = weak.upgrade() else { return };
-            let need = this.session.borrow().save_credential_need();
-            match need {
-                SaveCredentialNeed::UseRetained => {
-                    this.start_save(SaveTarget::ChosenPath(path), SaveCredential::Retained)
-                }
-                SaveCredentialNeed::AskForCurrentPassphrase => {
-                    this.ask_current_passphrase("Save", move |this, passphrase| {
-                        this.start_save(
-                            SaveTarget::ChosenPath(path.clone()),
-                            SaveCredential::ReenteredCurrent(Credential::Passphrase(passphrase)),
-                        )
-                    });
-                }
-                SaveCredentialNeed::AskForNewPassphrase => {
-                    let file_name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let weak = this.weak();
-                    let sheet = present_new_password_sheet(
-                        &this.window,
-                        NewPasswordText {
-                            title: format!("Create a password for “{file_name}”"),
-                            message: "The file will be encrypted with this password.".to_owned(),
-                            confirm_button: "Encrypt and Save",
-                        },
-                        this.mtm,
-                        move |passphrase| {
-                            if let Some(this) = weak.upgrade() {
-                                this.sheet.borrow_mut().take();
-                                this.start_save(
-                                    SaveTarget::ChosenPath(path.clone()),
-                                    SaveCredential::New(Credential::Passphrase(passphrase)),
-                                );
-                            }
-                        },
-                        {
-                            let weak = this.weak();
-                            move || {
-                                if let Some(this) = weak.upgrade() {
-                                    this.sheet.borrow_mut().take();
-                                    this.after_save.set(AfterSave::Nothing);
-                                    app().cancel_quit();
-                                }
-                            }
-                        },
-                    );
-                    *this.sheet.borrow_mut() = Some(sheet);
-                }
+            if let Some(this) = weak.upgrade() {
+                this.save_to_chosen_path(path);
             }
         });
+    }
+
+    /// Saves to a path chosen in the save dialog (Save As, or the first
+    /// save of a new document), asking for whichever password is needed.
+    fn save_to_chosen_path(self: &Rc<Self>, path: PathBuf) {
+        let this = self;
+        self.last_attempt
+            .replace(Some(SaveAttempt::ChosenPath(path.clone())));
+        let need = this.session.borrow().save_credential_need();
+        match need {
+            SaveCredentialNeed::UseRetained => {
+                this.start_save(SaveTarget::ChosenPath(path), SaveCredential::Retained)
+            }
+            SaveCredentialNeed::AskForCurrentPassphrase => {
+                this.ask_current_passphrase("Save", move |this, passphrase| {
+                    this.start_save(
+                        SaveTarget::ChosenPath(path.clone()),
+                        SaveCredential::ReenteredCurrent(Credential::Passphrase(passphrase)),
+                    )
+                });
+            }
+            SaveCredentialNeed::AskForNewPassphrase => {
+                let file_name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let weak = this.weak();
+                let sheet = present_new_password_sheet(
+                    &this.window,
+                    NewPasswordText {
+                        title: format!("Create a password for “{file_name}”"),
+                        message: "The file will be encrypted with this password.".to_owned(),
+                        confirm_button: "Encrypt and Save",
+                    },
+                    this.mtm,
+                    move |passphrase| {
+                        if let Some(this) = weak.upgrade() {
+                            this.sheet.borrow_mut().take();
+                            this.start_save(
+                                SaveTarget::ChosenPath(path.clone()),
+                                SaveCredential::New(Credential::Passphrase(passphrase)),
+                            );
+                        }
+                    },
+                    {
+                        let weak = this.weak();
+                        move || {
+                            if let Some(this) = weak.upgrade() {
+                                this.sheet.borrow_mut().take();
+                                this.after_save.set(AfterSave::Nothing);
+                                app().cancel_quit();
+                            }
+                        }
+                    },
+                );
+                *this.sheet.borrow_mut() = Some(sheet);
+            }
+        }
     }
 
     /// File → Change Encryption Password…
@@ -665,6 +709,7 @@ impl DocumentWindow {
         if !can || self.has_sheet() {
             return;
         }
+        self.last_attempt.replace(Some(SaveAttempt::ChangePassword));
         let weak = self.weak();
         let cancel = self.weak();
         let sheet = present_new_password_sheet(
@@ -691,6 +736,18 @@ impl DocumentWindow {
             },
         );
         *self.sheet.borrow_mut() = Some(sheet);
+    }
+
+    /// "Try Again" after a failed save: repeats the same operation. A retry
+    /// of a password change asks for the new password again, because it is
+    /// not kept after a failed attempt.
+    fn retry_last_save(self: &Rc<Self>) {
+        let attempt = self.last_attempt.borrow().clone();
+        match attempt {
+            Some(SaveAttempt::ChosenPath(path)) => self.save_to_chosen_path(path),
+            Some(SaveAttempt::ChangePassword) => self.change_password(),
+            Some(SaveAttempt::CurrentFile) | None => self.save(),
+        }
     }
 
     fn ask_current_passphrase(
@@ -918,7 +975,14 @@ impl DocumentWindow {
             let Some(failure) = session.last_failure() else {
                 return;
             };
-            save_failure_report(failure, &session)
+            let mut report = save_failure_report(failure, &session);
+            if *self.last_attempt.borrow() == Some(SaveAttempt::ChangePassword) {
+                report.message.push(
+                    "The password was not changed. The file on disk still opens with the previous password."
+                        .to_owned(),
+                );
+            }
+            report
         };
         let weak = self.weak();
         let sheet = present_report_sheet(&self.window, &report, self.mtm, move |action| {
@@ -927,7 +991,7 @@ impl DocumentWindow {
             this.session.borrow_mut().acknowledge_save_failure();
             this.changed();
             match action {
-                FailureAction::TryAgain => this.save(),
+                FailureAction::TryAgain => this.retry_last_save(),
                 FailureAction::SaveAs => this.save_as(),
                 FailureAction::ReloadFromDisk => this.reload_from_disk(true),
                 FailureAction::RevealStagingFile(path) => {
@@ -982,7 +1046,7 @@ impl DocumentWindow {
             match action {
                 FailureAction::RevealStagingFile(path) => reveal_in_finder(&path),
                 FailureAction::RetryCleanup => this.retry_cleanup(),
-                FailureAction::TryAgain => this.save(),
+                FailureAction::TryAgain => this.retry_last_save(),
                 FailureAction::SaveAs => this.save_as(),
                 FailureAction::ReloadFromDisk => this.reload_from_disk(true),
                 FailureAction::Cancel | FailureAction::Dismiss => {}
@@ -1005,6 +1069,12 @@ impl DocumentWindow {
 
     fn on_became_key(self: &Rc<Self>) {
         app().refresh_inspector();
+        self.check_for_external_change();
+    }
+
+    /// Compares the file on disk with the version this window last read or
+    /// wrote, in the background, and reports a change if one is found.
+    pub fn check_for_external_change(self: &Rc<Self>) {
         let job = {
             let session = self.session.borrow();
             if !session.is_unlocked() || session.is_saving() || self.checking_external.get() {
@@ -1301,6 +1371,20 @@ impl DocumentWindow {
         );
     }
 
+    /// Closes sheets that hold no unsaved work (unlock sheets, notices), so
+    /// that quitting is not blocked by them.
+    pub fn dismiss_sheets_for_quit(&self) {
+        if let Some(sheet) = self.unlock_sheet.borrow_mut().take() {
+            sheet.close();
+        }
+        if let Some(sheet) = self.sheet.borrow_mut().take() {
+            sheet.close();
+        }
+        if let Some(attached) = self.window.attachedSheet() {
+            self.window.endSheet(&attached);
+        }
+    }
+
     /// Ends the session and closes the window immediately.
     pub fn close_now(self: &Rc<Self>, decision: UnsavedChangesDecision) {
         self.release_for_close(decision);
@@ -1417,7 +1501,14 @@ impl DocumentWindow {
             .borrow()
             .leftover_staging_files()
             .first()
-            .map(|leftover| leftover.path.clone());
+            .map(|leftover| leftover.path.clone())
+            .or_else(|| {
+                self.path().and_then(|path| {
+                    editage_core::storage::find_staging_files(&path)
+                        .into_iter()
+                        .next()
+                })
+            });
         if let Some(path) = path {
             reveal_in_finder(&path);
         }

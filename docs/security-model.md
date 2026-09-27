@@ -132,7 +132,11 @@ permissions the final file will have (see below). It only ever receives
 ciphertext: the complete encrypted document. It is then atomically renamed
 over the document, which consumes it. If a save fails, the staging file is
 removed. If removal fails, its path is shown to the user and in the Security
-Inspector, with "Reveal" and "Retry Cleanup" actions.
+Inspector, with "Reveal" and "Retry Cleanup" actions. The inspector's
+"Staging files" row also scans the document's folder for files matching the
+staging name pattern (`.<name>.<16 hex digits>.tmp`), so a staging file left by
+an interrupted earlier session is reported as found on disk rather than
+claimed absent.
 
 The staging file is in the same folder as the document because an atomic
 rename only works within one filesystem. A sync client watching that folder
@@ -208,7 +212,8 @@ you use Edit › Find › Use Selection for Find (⌘E), may be placed there by
 AppKit, where other applications can read it. This is system behaviour that
 Editage does not control and does not track or clear. Avoid searching for
 secret values, or selecting them for Find, if this matters to you. When a
-document is locked, its find bar is hidden.
+document is locked, its find bar is hidden. The Security Inspector states this
+in its "Find text" row.
 
 ## Undo
 
@@ -235,7 +240,8 @@ core keeps no copy of the saved text to compare against. See
 - A crash during a save leaves the previous encrypted file intact unless the
   atomic replacement had already happened (see
   [save-protocol.md](save-protocol.md)). It may leave a staging file, which
-  contains ciphertext only.
+  contains ciphertext only; the Security Inspector reports it when the
+  document is opened again.
 - If macOS writes a crash report or core dump, it may contain process memory.
   See the next section.
 
@@ -361,9 +367,12 @@ guess expensive; it does not make a weak passphrase strong.
 
 ## Size limits
 
-- Files larger than **10 MiB** of ciphertext open only after a confirmation,
-  because the whole text is decrypted into one text view.
-- Files larger than **512 MiB** are refused. Decrypting needs the whole
+- Files larger than **10 MB** (10,000,000 bytes) of ciphertext open only
+  after a confirmation, because the whole text is decrypted into one text view.
+- Continuous spell checking is paused for documents larger than **1 MB** of
+  text: the system spelling service re-checks the whole buffer and would stall
+  the editor for minutes. The Security Inspector says when it is paused.
+- Files larger than **500 MB** are refused. Decrypting needs the whole
   ciphertext and the whole plaintext in memory at the same time, and a single
   native text view with hundreds of megabytes of text is impractical.
 
@@ -388,9 +397,11 @@ in `preferences::keys::ALL`.
   window) clears the list immediately and stops recording. File › Open Recent ›
   Clear Menu clears the list without turning recording off. macOS, Finder or a
   sync application may keep their own records of files you open.
-- **Reopen documents at launch** (off by default): the paths of documents that
-  were open when the application quit. They are reopened **locked**; each asks
-  for its passphrase again. Turning the setting off clears the list.
+- **Reopen documents at launch** (off by default): the paths of open
+  documents. The list is updated whenever a document is opened or closed (not
+  only at quit), so it survives a crash or forced quit. Documents are
+  reopened **locked**; each asks for its passphrase again. Turning the setting
+  off clears the list.
 
 Settings shows a plain description of what is stored
 (`Preferences::stored_metadata_description`) and where. The same defaults
