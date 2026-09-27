@@ -1,0 +1,3 @@
+Dummy fixture created with the reference Go age CLI.
+username: example
+password: example

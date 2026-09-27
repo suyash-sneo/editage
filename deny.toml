@@ -1,0 +1,67 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+# Run locally with: cargo deny check
+
+[graph]
+# The platforms Editage is built and tested on. Windows-only dependencies of
+# dev-dependencies (such as windows-sys under tempfile) are left out; add a
+# Windows target here when a Windows frontend exists.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = false
+no-default-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+# Any advisory that must be ignored is listed here with the reason.
+ignore = []
+
+[licenses]
+version = 2
+# Every licence below is satisfied by at least one dependency today, or is a
+# common permissive licence kept so that routine dependency updates do not
+# fail CI. Checked against the `license` field of every crate in Cargo.lock.
+#
+# Notable cases in the current graph:
+#   - curve25519-dalek, x25519-dalek, subtle: BSD-3-Clause (via age)
+#   - tinystr, zerovec, zerofrom: Unicode-3.0; unicode-ident: (MIT OR Apache-2.0) AND Unicode-3.0
+#   - self_cell 0.10: Apache-2.0 only (via age's localisation stack)
+#   - rustix, linux-raw-sys: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT (dev-only, via tempfile)
+#   - objc2-* and dispatch2: Zlib OR Apache-2.0 OR MIT (macOS app)
+# The fluent crates used by age are Apache-2.0 OR MIT; no MPL-2.0 crate is in
+# the graph, so MPL-2.0 is not allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# Do not fail because an allowed licence is not currently used.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+deny = [
+    { crate = "reqwest", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "hyper", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "ureq", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "curl", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "isahc", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "surf", reason = "Editage makes no network requests; see docs/security-model.md" },
+    { crate = "tokio", reason = "Editage makes no network requests; see docs/security-model.md" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

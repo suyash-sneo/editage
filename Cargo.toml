@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/editage-core", "apps/macos"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+repository = "https://github.com/editage/editage"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+print_stdout = "warn"
+
+# Unoptimised scrypt is roughly 50x slower, which makes opening a standard
+# age file in a debug build take many seconds. Optimise only the
+# cryptographic dependencies in debug builds; application code stays
+# debuggable.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3

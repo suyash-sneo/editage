@@ -1,0 +1,25 @@
+[package]
+name = "editage-macos"
+description = "Native macOS (AppKit) frontend for Editage."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "Editage"
+path = "src/main.rs"
+
+[dependencies]
+editage-core = { path = "../../crates/editage-core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = "0.3"
+
+[lints]
+workspace = true

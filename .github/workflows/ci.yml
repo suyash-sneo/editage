@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# The macOS job builds and tests the whole workspace, including the AppKit
+# frontend. The Linux job tests only the portable core.
+#
+# GUI frontends for other operating systems (Windows, GTK) will get their own
+# jobs on runners of that operating system when they exist. Cross-compiling a
+# GUI binary does not prove that it works on that operating system, so no
+# cross-compilation job stands in for them.
+
+jobs:
+  macos:
+    name: macOS (workspace)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The reference age CLI, for the interoperability test. `expect`,
+      # which drives age's passphrase prompt, is part of macOS.
+      - name: Install age
+        run: brew install age
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test (including the reference-CLI interoperability test)
+        run: cargo test --workspace -- --include-ignored
+
+      - name: Build the macOS app (release)
+        run: cargo build -p editage-macos --release
+
+  linux-core:
+    name: Linux (core only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install age and expect
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age expect
+
+      - name: Test the core (including the reference-CLI interoperability test)
+        run: cargo test -p editage-core -- --include-ignored
+
+  cargo-deny:
+    name: cargo-deny (licences, advisories, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2

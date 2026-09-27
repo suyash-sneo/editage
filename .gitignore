@@ -1,0 +1,40 @@
+# Build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is committed on purpose (application builds must be reproducible).
+
+# Editage save staging files (".<name>.age.<random>.tmp"). They contain
+# ciphertext only, but are never meant to be committed.
+.*.age.*.tmp
+
+# Encrypted documents are personal data. Only the dummy test fixtures are
+# tracked; anything else ending in .age (e.g. a file you tested with) is not.
+*.age
+!/tests/fixtures/*.age
+
+# Output of the reference-CLI interop test and manual decryption checks
+*.decrypted
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.fleet/
+
+# Profiling and coverage
+*.profraw
+*.profdata
+/coverage/
+lcov.info
