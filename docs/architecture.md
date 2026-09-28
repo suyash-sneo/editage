@@ -93,13 +93,28 @@ zeroized as it is dropped.
 
 ## The macOS frontend
 
-`apps/macos/src/` is organised by window and by concern: `app.rs` (the
-application controller and delegate, the one-second timer for clipboard
-clearing, auto-lock and inspector refresh), `document_window.rs` (every user
-flow on a document), `editor_view.rs` (the `NSTextView` subclass),
-`password_sheet.rs`, `sheets.rs`, `security_inspector.rs`,
-`settings_window.rs`, `menu.rs`, `clipboard.rs`, `preferences_store.rs`,
-`background.rs`, and small helpers in `controls.rs`.
+`apps/macos/src/` is organised by window and by concern:
+
+- `main.rs`: entry point; hands the main thread to `app::run`.
+- `app.rs`: the application controller and delegate: open documents,
+  preferences, the clipboard tracker, the diagnostic log, quitting, and the
+  one-second timer for clipboard clearing, auto-lock and inspector refresh.
+- `document_window.rs`: every user flow on a document (unlock, save, Save As,
+  password change, lock, reload, external-change checks, close).
+- `editor_view.rs`: the `NSTextView` subclass that reports edits and copies
+  and disables automatic text changes.
+- `password_sheet.rs`: the unlock sheet and the new-password sheet.
+- `sheets.rs`: failure reports, notices, confirmations and the save-changes
+  alert.
+- `info_popover.rs`: the Document Info popover (ⓘ, ⌘I).
+- `security_inspector.rs`: the Security Inspector panel (⌥⌘I).
+- `welcome_window.rs`, `settings_window.rs`, `about_window.rs`,
+  `diagnostics_window.rs`: the auxiliary windows.
+- `menu.rs` and `toolbar.rs`: the main menu (with its enabling rules) and the
+  window toolbars.
+- `clipboard.rs`, `preferences_store.rs`, `background.rs`: pasteboard access,
+  `NSUserDefaults` storage, and `run_in_background`.
+- `controls.rs`: small AppKit helpers, `ActionTarget` and `TargetBag`.
 
 AppKit controls send their actions to target objects. `controls::ActionTarget`
 is an Objective-C object that forwards an action to a Rust closure. Controls
@@ -116,7 +131,7 @@ be a use-after-free.
 ### `secrets`
 
 The types that carry secret material: `Passphrase`, `Credential`
-(passphrase-only in this version) and `Plaintext`.
+(passphrase-only) and `Plaintext`.
 
 - None of them implements `Clone`. `Passphrase::duplicate_for_operation` is
   the only way to copy one, so every copy is visible where it is made.
@@ -247,8 +262,8 @@ save protocol, the state machine or the frontends. To add one:
 1. Add a variant to `EncryptionFormat` in `crypto/mod.rs`, fill in its
    `display_name`, `protection_description`, `key_derivation_description`,
    `independent_decrypt_command` and `required_credential`, and add its
-   detection rule to `detect_encryption_format`. (Detection currently
-   recognises OpenPGP only to refuse it with a clear message.)
+   detection rule to `detect_encryption_format`. (Detection recognises
+   OpenPGP only to refuse it with a clear message.)
 2. If it needs a different kind of secret (a private key, an age identity
    file), add a variant to `Credential` and `CredentialKind` in `secrets.rs`,
    with a redacted `Debug` implementation and a `duplicate_for_operation`
@@ -282,7 +297,7 @@ A new frontend reuses all of `editage-core`. It needs to:
   equivalent) to `ClipboardTracker`.
 
 For Windows, `storage.rs` must first gain a Windows implementation: it uses
-`std::os::unix` and `libc` today and does not compile elsewhere. See
+`std::os::unix` and `libc` and does not compile elsewhere. See
 [platform-notes.md](platform-notes.md). For Linux, the core compiles and its
 tests run in CI, but the durability behaviour differs from macOS (also in
 platform notes).

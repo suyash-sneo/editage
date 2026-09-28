@@ -192,8 +192,9 @@ Mitigations:
   and again immediately before the rename. A mismatch blocks the save; the
   user chooses Reload From Disk or Save As. Nothing is merged or silently
   overwritten.
-- The file is also checked when the window becomes active, so the conflict is
-  usually shown before the user tries to save.
+- The file is also checked when the document's window becomes key and when
+  Editage becomes the active application, so the conflict is usually shown
+  before the user tries to save.
 - Unlocking after a lock reads the file from disk afresh.
 - Cloud placeholders are refused at open rather than opened as a stale or
   empty file.
@@ -224,9 +225,11 @@ Mitigations:
 - The passphrase is kept only under the "keep until locked" policy, can be
   forgotten on demand, and is shown as retained or not in the Security
   Inspector.
-- Auto-lock after inactivity (15 minutes by default; inactivity means no
-  keyboard, mouse or scroll events in Editage). It is postponed, never forced,
-  when there are unsaved changes, and the postponement is shown.
+- Auto-lock after inactivity (15 minutes by default; inactivity means no key
+  presses, mouse clicks or scrolling in Editage, see
+  [platform-notes.md](platform-notes.md#timer-inactivity-and-quitting)). It is
+  postponed, never forced, when there are unsaved changes, and the
+  postponement is shown.
 - Closing releases everything the session holds.
 
 Tests:
@@ -245,8 +248,9 @@ Tests:
 Limits: no test can show that memory was actually overwritten, and memory
 owned by AppKit, the `age` crate or the allocator is outside the core's
 control. The macOS frontend makes short-lived, zeroize-on-drop copies of the
-whole text for saving, for the Document Info counts and for Go to Line. A never-saved document cannot be locked, so its text stays in memory
-until it is saved or closed.
+whole text for saving, for the Document Info counts and for Go to Line. A
+never-saved document cannot be locked, so its text stays in memory until it
+is saved or closed.
 
 ### 6. Clipboard exposure
 
@@ -277,9 +281,8 @@ as text is copied; clearing later does not undo that. The pasteboard
 operations themselves are in the frontend and are checked by hand (see the
 [manual test checklist](manual-test-checklist.md)).
 
-**Find pasteboard (not mitigated).** The editor uses the native find bar
-(`NSTextFinder`). macOS may place the find bar's search text, and the
-selection used with Use Selection for Find (⌘E), on the system-wide find
-pasteboard, which other applications can read. This is outside the
-application's control; Editage does not track or clear it. It is documented in
-[security-model.md](security-model.md#find-pasteboard).
+**Find pasteboard (not mitigated).** macOS may place the find bar's search
+text, and the selection used with Use Selection for Find (⌘E), on the
+system-wide find pasteboard, which other applications can read. Editage does
+not track or clear it; the Security Inspector's "Find text" row states this.
+See [security-model.md](security-model.md#find-pasteboard).

@@ -6,25 +6,28 @@ easy to audit.
 
 ## Before you open a pull request
 
-Run these from the repository root. CI runs the same commands.
+Run these from the repository root. CI runs the same checks on every push
+and pull request (see [.github/workflows/ci.yml](.github/workflows/ci.yml)),
+plus `cargo deny check`.
 
 ```sh
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test
+cargo test --workspace -- --include-ignored
 ```
+
+`--include-ignored` also runs the interoperability test that decrypts
+Editage's output with the reference age CLI. It needs `age`
+(`brew install age`) and `expect` (part of macOS). Without them, run
+`cargo test --workspace` and say so in the pull request.
 
 If your change touches the user interface, also go through the relevant
 parts of [docs/manual-test-checklist.md](docs/manual-test-checklist.md) by
 hand and say in the pull request which items you checked. Automated tests do
 not cover the AppKit frontend.
 
-If you have the reference age CLI installed (`brew install age`), please also
-run the interoperability test:
-
-```sh
-cargo test -p editage-core -- --include-ignored
-```
+The interoperability fixtures in `tests/fixtures/` are made by the reference
+age CLI with `tests/fixtures/generate-fixtures.sh`.
 
 ## Changes to storage or security behaviour
 
@@ -80,9 +83,8 @@ crates are rejected outright: Editage makes no network requests.
 ## `unsafe`
 
 - `unsafe` belongs only in the platform layer: system calls and platform
-  APIs. Today that means a few `libc` calls in
-  `crates/editage-core/src/storage.rs` and the AppKit frontend in
-  `apps/macos/`.
+  APIs: a few `libc` calls in `crates/editage-core/src/storage.rs` and the
+  Objective-C interop in the AppKit frontend (`apps/macos/`).
 - Keep each `unsafe` block as small as possible.
 - Every `unsafe` block has a `// SAFETY:` comment that explains why the call is
   sound.

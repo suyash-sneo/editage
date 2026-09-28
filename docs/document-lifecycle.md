@@ -195,10 +195,12 @@ frontend. It returns:
 - `PostponedSaveInProgress` if it is due but a save is running.
 
 In the macOS frontend, a one-second timer asks each document for this
-decision. Inactivity means no keyboard, mouse-button, mouse-movement or scroll
-events in Editage itself; activity in other applications does not count, so a
-document can lock while you work elsewhere. If a sheet is open on the window
-when auto-lock is due, locking waits and is tried again on the next tick.
+decision. Inactivity means no key presses, mouse clicks or scrolling in
+Editage itself (pointer movement alone may not count; see
+[platform-notes.md](platform-notes.md#timer-inactivity-and-quitting)).
+Activity in other applications does not count, so a document can lock while
+you work elsewhere. If a sheet is open on the window when auto-lock is due,
+locking waits and is tried again on the next tick.
 
 Auto-lock **never saves and never discards edits**. When it is postponed
 because of unsaved changes, the postponement is recorded in the diagnostics
@@ -239,8 +241,8 @@ password is asked for before the file is decrypted again.
    only in memory; the window subtitle says "Not saved yet — exists only in
    memory". Nothing is written until the first save.
 2. On the first save, `save_credential_need` returns `AskForNewPassphrase`.
-   The macOS frontend shows the Save dialog (suggested name "Untitled.txt", which the panel shows as "Untitled.age";
-   ".age" is appended if missing, and an existing file under the appended name
+   The macOS frontend shows the Save dialog (suggested name "Untitled.txt",
+   which the panel shows as "Untitled.age"; ".age" is appended if missing, and an existing file under the appended name
    is replaced only after confirmation), then the sheet "Create a password for
    “…”" with Password and Confirm Password fields and an "Encrypt and Save"
    button.
@@ -299,9 +301,11 @@ for never-saved and read-only documents and while a save is running.
 
 `begin_external_check` / `ExternalCheckJob::run` / `finish_external_check`
 compare the file on disk with the version this application last read or
-wrote. The macOS frontend runs the check when the window becomes key, and
-while a change is known, Save shows the conflict sheet instead of starting a
-save.
+wrote. The macOS frontend runs the check, for an unlocked document with no
+save running, when its window becomes key and, for the document being
+inspected, when Editage becomes the active application. While a change is
+known, Save shows the conflict sheet instead of starting a save. If the file
+is no longer at its path, the sheet says so and offers Save As only.
 
 - If device, inode, size and modification time are all unchanged, the
   contents are assumed unchanged without re-reading them. Otherwise the file
@@ -317,9 +321,10 @@ save.
 The macOS window subtitle is derived from the session on every change:
 "Locked", "Decrypting…", "Saving…", "Not saved — the last save failed",
 "Changed on disk by another program", "File no longer on disk at this path",
-"Read-only", "Saved locally at <time>" (after a save in this session), "Not
-saved yet — exists only in memory", or nothing (unlocked, not yet saved in
-this session). The title shows "— Edited" while there are unsaved changes.
+"Read-only", "Saved locally at <time>" (after a save in this session), "Read
+from disk at <time>" (after a reload that followed this session's last
+save), "Not saved yet — exists only in memory", or nothing (unlocked, not yet
+saved in this session). The title shows "— Edited" while there are unsaved changes.
 
 ## Tests
 

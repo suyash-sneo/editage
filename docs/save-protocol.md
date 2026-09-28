@@ -88,7 +88,7 @@ silently re-encrypt the document under a different passphrase.
 A save with a retained passphrase, or with a new passphrase (first save,
 Change Encryption Password), skips this stage.
 
-### 3. Encrypting (`Encrypting`)
+### 3. Encryption (`Encrypting`)
 
 The text is encrypted in memory into a complete age file, with scrypt work
 factor 2^18. Immediately afterwards, **the transaction's copy of the plaintext
@@ -173,7 +173,7 @@ unchanged by this application.
 | Checking destination | not writable (`DestinationReadOnly`) | Unchanged | none created | "… is read-only." Offers Save As. |
 | Checking destination | cannot inspect (`DestinationInspect`) | Unchanged | none created | "The document could not be saved." with the system error. |
 | Confirming passphrase | typed passphrase is wrong (`PassphraseMismatch`) | Unchanged or did not exist | none created | "The password you entered does not match this document's password." Offers Try Again. |
-| Encrypting | encryption error (`Encryption`) | Unchanged or did not exist | none created | "The document could not be saved." |
+| Encryption | encryption error (`Encryption`) | Unchanged or did not exist | none created | "The document could not be saved." |
 | Creating staging file | cannot create, e.g. folder not writable (`StagingFileCreate`) | Unchanged or did not exist | removed if it appeared | "The document could not be saved." with a one-line cause, e.g. no permission to write in the folder. |
 | Writing encrypted data | write error, e.g. disk full (`StagingFileWrite`) | Unchanged or did not exist | partial file removed | as above, e.g. "The disk … is full." |
 | Flushing to disk | flush error (`Flush`) | Unchanged or did not exist | removed | as above |
@@ -224,7 +224,7 @@ What the code asks the operating system to do, and what that means.
   falling back to `fsync(2)`. A failure is recorded and does not fail the
   save.
 
-**Linux** (core only; there is no Linux frontend yet)
+**Linux** (core only; there is no Linux frontend)
 
 - Staging file: `fsync(2)` (`File::sync_all`), recorded as `Fsync`.
 - Folder: `fsync(2)` on the directory.

@@ -55,7 +55,7 @@ both the binary and the ASCII-armored (`-----BEGIN AGE ENCRYPTED FILE-----`)
 encoding. When you save, it keeps the encoding the file had, so an armored
 file stays armored. New documents are saved in the binary encoding.
 
-Some limits of this version:
+Current limits:
 
 - Only passphrase-protected files are supported. Files encrypted to age
   recipients (public keys) are recognised and refused with an explanation.
@@ -108,14 +108,14 @@ cargo run -p editage-macos -- path/to/notes.txt.age
 ```
 
 The executable is named `Editage`. There is no script to build an `.app`
-bundle yet, so the application runs as an unbundled executable. One visible
+bundle, so the application runs as an unbundled executable. One visible
 consequence is where macOS keeps its preferences; see
 [platform notes](docs/platform-notes.md).
 
 ## Testing
 
 ```sh
-cargo test
+cargo test --workspace
 ```
 
 One test decrypts Editage's output with the reference `age` command-line tool.
@@ -123,7 +123,7 @@ It is ignored by default because it needs external tools. To run it as well:
 
 ```sh
 brew install age          # expect is already part of macOS
-cargo test -p editage-core -- --include-ignored
+cargo test --workspace -- --include-ignored
 ```
 
 The age CLI reads passphrases only from a terminal, so the test drives it with

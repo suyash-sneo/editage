@@ -38,3 +38,6 @@
 *.profdata
 /coverage/
 lcov.info
+
+# Logs (e.g. app output captured during manual testing)
+*.log

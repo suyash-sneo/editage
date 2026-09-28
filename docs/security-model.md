@@ -1,7 +1,7 @@
 # Security model
 
 This document describes what Editage does with your document, your
-passphrase and your files, as the code does it today. Where the application's
+passphrase and your files, as the code does it. Where the application's
 control ends, it says so. If you find a difference between this document and
 the code, please report it (see [SECURITY.md](../SECURITY.md)); it is treated
 as a bug.
@@ -88,8 +88,8 @@ Settings › Security › Password preference. The choice applies to that
 document until it is locked or closed.
 
 **Forget Retained Passphrase** (in the File menu and the Security Inspector,
-after a confirmation) releases the retained passphrase immediately and switches that document to "ask again when
-saving" until it is next unlocked.
+after a confirmation) releases the retained passphrase immediately and
+switches that document to "ask again when saving" until it is next unlocked.
 
 Transient duplicates are made for individual operations, because the `age`
 crate takes ownership of the passphrase it uses:
@@ -134,9 +134,9 @@ over the document, which consumes it. If a save fails, the staging file is
 removed. If removal fails, its path is shown to the user and in the Security
 Inspector, with "Reveal" and "Retry Cleanup" actions. The inspector's
 "Staging files" row also scans the document's folder for files matching the
-staging name pattern (`.<name>.<16 hex digits>.tmp`), so a staging file left by
-an interrupted earlier session is reported as found on disk rather than
-claimed absent.
+staging name pattern (`.<name>.<16 hex digits>.tmp`), so it reports staging
+files that actually exist on disk, including one left by an interrupted
+session.
 
 The staging file is in the same folder as the document because an atomic
 rename only works within one filesystem. A sync client watching that folder
@@ -264,8 +264,9 @@ ciphertext: the document and possibly a short-lived staging file.
 - If the sync client changes the file while it is open (for example because
   it was edited on another device), Editage detects this by comparing a
   SHA-256 fingerprint of the file with the version it last read or wrote. The
-  comparison is made when the window becomes active, at the start of every
-  save, and again immediately before the atomic replacement. Saving is refused
+  comparison is made when the document's window becomes key, when Editage
+  becomes the active application, at the start of every save, and again
+  immediately before the atomic replacement. Saving is refused
   and you are offered Reload From Disk or Save As. Nothing is merged.
 - Files that are cloud placeholders (not downloaded; detected with the
   `SF_DATALESS` flag) are refused at open. Download them first.
@@ -275,7 +276,7 @@ ciphertext: the document and possibly a short-lived staging file.
 
 ## Spelling checker
 
-When "Check spelling while typing" is on (the default), AppKit sends the text
+When "Check Spelling While Typing" is on (the default), AppKit sends the text
 to the macOS spelling service, a separate system process on the same Mac,
 through local inter-process communication. The Security Inspector shows
 whether spelling checking is on for the unlocked document. Turn it off with
@@ -327,8 +328,8 @@ The save protocol assumes:
   read, but saving in place is refused: the window subtitle says "Read-only",
   Save shows "This document is read-only." and suggests Save As, and the
   Security Inspector says why. An informational notice ("This document is
-  read-only.", OK only) is shown at open. Saving is
-  also refused inside the save transaction if the file is not writable
+  read-only.", OK only) is shown at open. Saving is also refused inside the
+  save transaction if the file is not writable
   (checked with `access(W_OK)`), because replacing a file you marked
   read-only would silently defeat that choice. Save As to another location is
   still possible.
@@ -392,7 +393,8 @@ contain document text, passphrases, or clipboard contents. The keys are listed
 in `preferences::keys::ALL`.
 
 - **Recent documents** (on by default): the paths of up to 10 recently opened
-  or saved documents, shown in File › Open Recent and the welcome window.
+  or saved documents, shown in File › Open Recent (all of them) and the
+  welcome window (the six most recent).
   Turning the setting off (Settings › General, or the checkbox in the welcome
   window) clears the list immediately and stops recording. File › Open Recent ›
   Clear Menu clears the list without turning recording off. macOS, Finder or a

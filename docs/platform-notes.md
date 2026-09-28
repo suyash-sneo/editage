@@ -1,6 +1,6 @@
 # Platform notes
 
-Editage runs on macOS today. The core (`editage-core`) also compiles and is
+Editage runs on macOS. The core (`editage-core`) also compiles and is
 tested on Linux, but there is no Linux or Windows frontend.
 
 Do not pretend that cross-compiling a GUI binary proves it works on that
@@ -27,9 +27,10 @@ Minimum version: macOS 13.
   rename would fail with `EXDEV`, and the message says so).
 - **Network volumes** are detected with `statfs(2)`: the filesystem type names
   `smbfs`, `nfs`, `afpfs`, `webdav`, `cifs` and `ftp` are treated as network
-  filesystems; the Security Inspector then shows a "Network volume" row (no
-  notice is shown at open). Read-only volumes are detected
-  from the `MNT_RDONLY` mount flag.
+  filesystems; an informational notice ("This document is on a network
+  volume.", OK only) is shown at open, and the Security Inspector shows a
+  "Network volume" row. Read-only volumes are detected from the `MNT_RDONLY`
+  mount flag.
 - **Cloud placeholders.** Files managed by a File Provider (iCloud Drive,
   OneDrive Files On-Demand and others) whose contents are not downloaded carry
   the `SF_DATALESS` flag in `st_flags`. Editage refuses to open them rather
@@ -41,18 +42,18 @@ Minimum version: macOS 13.
 ### Preferences
 
 Preferences are stored with `NSUserDefaults`, using the keys in
-`editage_core::preferences::keys`. The application is currently run as an
-unbundled executable (there is no `.app` bundle yet), so it has no bundle
-identifier, and the defaults domain is the executable name: **`Editage`**,
+`editage_core::preferences::keys`. The application runs as an unbundled
+executable (there is no `.app` bundle), so it has no bundle identifier, and
+the defaults domain is the executable name: **`Editage`**,
 stored in `~/Library/Preferences/Editage.plist`. You can inspect it with:
 
 ```sh
 defaults read Editage
 ```
 
-When the application is packaged as a bundle, the domain will become the
-bundle identifier and the file name will change accordingly. Existing
-preferences would then need to be migrated or will be reset.
+If the application is packaged as a bundle, the domain becomes the bundle
+identifier and the file name changes accordingly; existing preferences then
+need to be migrated or are reset.
 
 Other state that macOS keeps for the application:
 
@@ -119,6 +120,32 @@ quit only if a clear delay is set and the item is still there. Universal
 Clipboard (Handoff) may copy the clipboard to your other devices; this is
 controlled by macOS, not by Editage.
 
+### Timer, inactivity and quitting
+
+- **The one-second timer** (clipboard clearing, auto-lock, live Security
+  Inspector) is scheduled in the run loop's default mode. It does not fire
+  while an application-modal panel such as File › Open… is open or while a
+  menu is being tracked; a due clear or lock then happens on the first tick
+  afterwards.
+- **Inactivity** is measured with a local event monitor for key-down,
+  left and right mouse-down, scroll-wheel and mouse-moved events in Editage.
+  AppKit delivers mouse-moved events only to windows that ask for them, so
+  moving the pointer without clicking may not count as activity. Activity in
+  other applications never counts.
+- **Quitting.** AppKit's `terminate:` does nothing while a window has a sheet
+  attached. Editage › Quit (⌘Q) therefore first dismisses sheets on documents
+  that hold no unsaved work (such as unlock sheets) and then terminates. A
+  quit that macOS starts itself, for example at logout or restart, does not
+  go through that menu action and can be blocked while an unlock sheet is
+  open.
+
+### Accessibility
+
+- The editor, sheets, menus and Settings use standard AppKit controls. The
+  recent-document rows in the welcome window are stack views with a click
+  gesture recognizer, not buttons, so they cannot be activated with VoiceOver
+  or the keyboard. File › Open Recent offers the same documents.
+
 ## Windows (future)
 
 There is no Windows frontend. Notes for whoever writes one:
@@ -160,8 +187,8 @@ CI, using the non-macOS code paths.
   new directory entry to be durable.
 - **Replacement.** `rename(2)` is atomic within one filesystem, as on macOS.
   `renameat2` with `RENAME_NOREPLACE` could make the first save of a new
-  document refuse to overwrite a file created in the meantime; it is not used
-  today. There is no "replace only if unchanged" flag, so the small window
+  document refuse to overwrite a file created in the meantime; it is not
+  used. There is no "replace only if unchanged" flag, so the small window
   before the rename remains.
 - **Volumes.** `inspect_volume` and `is_cloud_placeholder` return defaults on
   non-macOS systems: network filesystems, read-only mounts and placeholders

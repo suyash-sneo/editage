@@ -1,10 +1,14 @@
 # Manual test checklist
 
-The AppKit frontend has no automated tests. GUI scripting is deliberately not
-used, because it sends keystrokes and clicks to the tester's live desktop. Go
-through this list by hand before a release, and the relevant sections after
-any UI change. Use dummy content only. In the pull request, say which items
-you checked, on which macOS version, and on which kind of volume.
+The AppKit frontend has no automated tests. Go through this list by hand
+before a release, and the relevant sections after any UI change. Use dummy
+content only. In the pull request, say which items you checked, on which
+macOS version, and on which kind of volume.
+
+Scripting the running app (System Events through `osascript`) sends real
+keystrokes and clicks to whichever application is frontmost. Use it only on a
+machine that is not otherwise in use, and bring Editage to the front before
+sending any input.
 
 Setup: build and run the app, and create a test file with the reference CLI:
 
@@ -66,7 +70,8 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       password." and the file is unchanged.
 - [ ] New document (⌘N): the subtitle says "Not saved yet — exists only in
       memory". The first ⌘S shows the Save dialog (suggested name
-      "Untitled.txt", shown by the panel as "Untitled.age"; typing `notes.txt` saves `notes.txt.age`), then "Create a password for “…”" with
+      "Untitled.txt", shown by the panel as "Untitled.age"; typing `notes.txt`
+      saves `notes.txt.age`), then "Create a password for “…”" with
       Password and Confirm Password. Mismatched entries show "The passwords do
       not match."; fewer than 10 characters shows the short-password hint.
       "Encrypt and Save" creates a file that `age --decrypt` reads, with mode
@@ -108,7 +113,7 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
 - [ ] While the document is unlocked, replace the file from Terminal with a new
       encryption of other text, using the same password
       (`age --passphrase --output /tmp/newer.age other.txt` then
-      `mv /tmp/newer.age ~/Desktop/test.txt.age`). Switching back to the window
+      `mv /tmp/newer.age ~/Desktop/test.txt.age`). Switching back to Editage
       shows "“test.txt.age” changed on disk while it was open." with Reload
       From Disk, Save As… and Cancel. The subtitle says "Changed on disk by
       another program". ⌘S shows the same conflict and does not write.
@@ -125,8 +130,8 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       Details copies the same text. The subtitle says "Not saved — the last
       save failed". Restore with `chmod 700`.
 - [ ] Make a file read-only (`chmod 400`) and open it. Before the unlock
-      sheet, a notice "This document is read-only." (OK) appears; the subtitle says "Read-only"; the inspector's
-      Writable row says "No — the file is read-only; saving is disabled"; ⌘S
+      sheet, a notice "This document is read-only." (OK) appears; the subtitle
+      says "Read-only"; the inspector's Writable row says "No — the file is read-only; saving is disabled"; ⌘S
       shows "This document is read-only." and suggests Save As…
 - [ ] Open a document from a disk image, then eject the image and save: the
       save fails at "Checking destination" and the edits stay in memory.
@@ -138,12 +143,15 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       target. Saving updates the target; the link still works.
 - [ ] Opening a file with two hard links warns that the other links keep the
       previous encrypted version.
-- [ ] Opening a file larger than 10 MB asks for confirmation first; after unlocking, the editor stays responsive and the inspector says spell checking is paused.
+- [ ] Opening a file larger than 10 MB asks for confirmation first; after
+      unlocking, the editor stays responsive and the inspector says spell
+      checking is paused.
 - [ ] A cloud placeholder (iCloud Drive or OneDrive file set to online-only)
       is refused with a request to download it first.
-- [ ] A file on a network share opens without a notice; the Security
-      Inspector shows a "Network volume" row saying that atomic replacement and
-      flushing depend on the server.
+- [ ] A file on a network share shows the informational notice "This
+      document is on a network volume." (OK only) before the unlock sheet; the
+      Security Inspector shows a "Network volume" row saying that atomic
+      replacement and flushing depend on the server.
 
 ## Security Inspector (File › Document Security…, ⌥⌘I)
 
@@ -195,12 +203,17 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       unchanged; misspelled words are underlined but not corrected. On
       macOS 15 and later, Writing Tools are not offered.
 - [ ] VoiceOver reads the text, the unlock sheet and the failure sheets.
+      (Known gap: the recent-document rows in the welcome window cannot be
+      activated with VoiceOver; use File › Open Recent.)
 - [ ] Light and dark mode, including switching while the app is running.
 - [ ] Format › Bigger / Smaller, Monospaced Font and Wrap Lines apply to open
       documents; View › Show Toolbar toggles the toolbar.
 
 ## Quit, relaunch, recent documents and preferences
 
+- [ ] Editage › Quit (⌘Q) while a locked document shows its unlock sheet
+      quits without asking. (Known gap: a quit that macOS starts itself, such
+      as at logout, can be blocked while an unlock sheet is open.)
 - [ ] With Settings › General › "Reopen documents that were open" on, quit
       with documents open and relaunch: they reopen **locked**.
 - [ ] With it off (the default), nothing is reopened. What remains from the
