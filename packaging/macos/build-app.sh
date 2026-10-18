@@ -38,6 +38,19 @@ plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp LICENSE-APACHE LICENSE-MIT "$APP/Contents/Resources/"
 
+# The icon: every size macOS asks for, from the 1024 px master.
+ICONSET=$DIST/AppIcon.iconset
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" packaging/macos/AppIcon.png \
+        --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+    double=$((size * 2))
+    sips -z "$double" "$double" packaging/macos/AppIcon.png \
+        --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
+done
+iconutil --convert icns --output "$APP/Contents/Resources/AppIcon.icns" "$ICONSET"
+rm -rf "$ICONSET"
+
 # Ad hoc signature with the hardened runtime. Apple silicon refuses to run
 # unsigned code, and the signature seals the bundle's contents.
 codesign --force --sign - --options runtime --timestamp=none "$APP"

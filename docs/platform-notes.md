@@ -75,7 +75,10 @@ from `packaging/macos/Info.plist`, signs it ad hoc with the hardened runtime
   quitting it and unsaved edits get the usual prompt.
 - **No sandbox.** The app is not sandboxed; it reads and writes the files and
   folders you choose, plus staging files beside them.
-- **No icon** yet; Finder shows the generic application icon.
+- **Icon.** `packaging/macos/AppIcon.png` is the 1024 px master: an 824 px
+  rounded tile centred on a transparent canvas (Apple's icon grid). The
+  build script makes `AppIcon.icns` from it with `sips` and `iconutil`. To
+  change the icon, replace the PNG with one laid out the same way.
 
 Other state that macOS keeps for the application:
 

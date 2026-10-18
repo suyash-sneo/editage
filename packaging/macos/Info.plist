@@ -9,6 +9,8 @@
 	<string>Editage</string>
 	<key>CFBundleExecutable</key>
 	<string>Editage</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.suyash-sneo.editage</string>
 	<key>CFBundleInfoDictionaryVersion</key>
