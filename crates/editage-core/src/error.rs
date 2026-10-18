@@ -140,6 +140,22 @@ pub enum EditorError {
         source: io::Error,
     },
 
+    #[error("could not read back staging file {path}")]
+    StagingFileReadBack {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    /// The staging file was read back but is not a faithful copy of the
+    /// document, so it must not replace anything.
+    #[error("the staging file {path} failed verification")]
+    StagingFileVerification {
+        path: PathBuf,
+        #[source]
+        problem: VerificationProblem,
+    },
+
     #[error("could not set permissions on {path}")]
     Permissions {
         path: PathBuf,
@@ -175,6 +191,22 @@ pub enum EditorError {
     },
 }
 
+/// Why a freshly written staging file failed verification.
+#[derive(Debug, thiserror::Error)]
+pub enum VerificationProblem {
+    #[error("reading it back returned different bytes from the encrypted data that was written")]
+    ContentsDiffer,
+
+    #[error("it could not be decrypted with the document's passphrase")]
+    DoesNotDecrypt {
+        #[source]
+        source: Box<EditorError>,
+    },
+
+    #[error("it decrypted to different text than the text being saved")]
+    TextDiffers,
+}
+
 impl EditorError {
     /// The underlying OS error, if any, for "System error: …" detail rows.
     pub fn io_error(&self) -> Option<&io::Error> {
@@ -187,6 +219,7 @@ impl EditorError {
             | EditorError::StagingFileCreate { source, .. }
             | EditorError::StagingFileWrite { source, .. }
             | EditorError::Flush { source, .. }
+            | EditorError::StagingFileReadBack { source, .. }
             | EditorError::Permissions { source, .. }
             | EditorError::AtomicReplace { source, .. }
             | EditorError::Cleanup { source, .. } => Some(source),

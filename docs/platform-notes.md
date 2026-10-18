@@ -101,7 +101,21 @@ Other state that macOS keeps for the application:
   Silent changes would corrupt passwords and other exact text. Writing Tools
   are disabled with `setWritingToolsBehavior:` (none) where the method exists
   (macOS 15 and later), because they can send text to other processes or
-  services.
+  services. Inline predictions (`inlinePredictionType`, macOS 14) and math
+  results (`mathExpressionCompletionType`, macOS 15) are set to "no" where
+  the methods exist.
+- **Keeping them off.** `EditorTextView` filters the context menu in
+  `menuForEvent:` and again in `willOpenMenu:withEvent:` (AppKit can add items
+  in between) to an allowlist of actions: `cut:`, `copy:`, `paste:`,
+  `pasteAsPlainText:`, `selectAll:` and the private spelling-suggestion
+  actions `_changeSpellingFromMenu:` and `_ignoreSpellingFromMenu:`. If a
+  macOS version renames those private actions, the suggestions disappear from
+  the menu; nothing else changes. The `toggle…:` actions for grammar,
+  substitutions, replacement, correction, link and data detection, smart
+  insert and completion are overridden to do nothing;
+  `toggleContinuousSpellChecking:` toggles the preference instead.
+  `validRequestorForSendType:returnType:` returns nil (no Services), and
+  `quickLookWithEvent:` and `quickLookPreviewItems:` do nothing (no Look Up).
 - **Find.** The find bar is the native `NSTextFinder`. macOS may share the
   search text, and the selection used with Use Selection for Find (⌘E),
   with other applications through the system find pasteboard. Editage does

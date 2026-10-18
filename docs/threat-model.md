@@ -134,6 +134,11 @@ Mitigations:
   rename, the original is never opened for writing, truncated or renamed.
 - The staging file is created with `O_EXCL`, so it never reuses an existing
   file.
+- Before the rename, the staging file is read back, compared byte for byte
+  with the ciphertext that was written, and decrypted with the same
+  passphrase; the decrypted text must match the text being saved. A file that
+  was damaged on the way to the disk, or would not open, never replaces the
+  original.
 - A save refuses to replace a read-only file or a symbolic link.
 - The staging file stays owner-only (`0600`) until it is complete and
   flushed; the original's permission bits (without set-user-ID, set-group-ID
@@ -159,6 +164,8 @@ Tests:
 - `interrupted_save_before_commit_leaves_original_valid`
 - `original_ciphertext_remains_valid_after_injected_failure`
 - `complete_ciphertext_is_written_before_destination_is_replaced`
+- `corrupted_staging_file_never_replaces_the_original`
+- `original_survives_when_the_staging_file_cannot_be_read_back`
 - `valid_new_file_exists_after_successful_replacement`
 - `read_only_destination_produces_correct_error_stage`
 - `read_only_folder_fails_at_staging_file_creation_with_permission_error`
@@ -173,7 +180,10 @@ Tests:
 - `non_utf8_contents_are_reported_without_replacing_bytes_and_source_is_untouched`
 - unit tests: `staging_file_creation_refuses_to_reuse_an_existing_name` and
   `staging_files_are_created_owner_only` (`storage`), `verifier_accepts_the_document_passphrase_and_rejects_others`
-  (`crypto`)
+  (`crypto`), `verification_accepts_a_faithful_staging_file`,
+  `verification_rejects_bytes_that_differ_from_what_was_written`,
+  `verification_rejects_a_file_that_does_not_open_with_the_save_passphrase`
+  and `verification_rejects_a_file_that_decrypts_to_different_text` (`save`)
 
 Not tested automatically: a symbolic link appearing at the destination
 between open and save; the `F_FULLFSYNC` refusal path and its `fsync(2)`
@@ -181,7 +191,7 @@ fallback.
 
 Residual risk: a write by another program in the short window between the
 final fingerprint check and the rename can be replaced. See
-[save-protocol.md](save-protocol.md#7-atomic-replacement-replacingoriginal).
+[save-protocol.md](save-protocol.md#8-atomic-replacement-replacingoriginal).
 
 ### 4. Stale cloud-sync versions
 

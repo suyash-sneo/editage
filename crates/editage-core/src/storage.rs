@@ -147,6 +147,10 @@ pub trait StorageBackend: Send + Sync {
     /// Flushes the file to storage as strongly as the platform allows.
     fn sync_file(&self, file: &File) -> io::Result<FileDurability>;
 
+    /// Reads the complete staging file back through a new handle, so it can
+    /// be verified before it replaces anything.
+    fn read_staging_file(&self, path: &Path) -> io::Result<Vec<u8>>;
+
     /// Gives the complete staging file the permissions the replaced file
     /// had (or owner-only for a new file), through the still-open handle.
     fn apply_final_permissions(&self, file: &File, mode: u32) -> io::Result<()>;
@@ -221,6 +225,10 @@ impl StorageBackend for FileSystemStorage {
 
     fn sync_file(&self, file: &File) -> io::Result<FileDurability> {
         sync_file_to_storage(file)
+    }
+
+    fn read_staging_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+        fs::read(path)
     }
 
     fn apply_final_permissions(&self, file: &File, mode: u32) -> io::Result<()> {
@@ -569,7 +577,11 @@ mod fault_injection {
         ApplyFinalPermissions,
         /// Writes the first half of the ciphertext, then fails.
         WriteCiphertextPartially,
+        /// Writes the whole ciphertext with one byte changed and reports
+        /// success, as silent corruption on the way to the disk would.
+        WriteCiphertextCorrupted,
         SyncFile,
+        ReadStagingFile,
         ReplaceDestination,
         SyncDirectory,
         RemoveStagingFile,
@@ -659,12 +671,23 @@ mod fault_injection {
                 file.write_all(&ciphertext[..ciphertext.len() / 2])?;
                 return self.injected(FaultPoint::WriteCiphertextPartially);
             }
+            if self.fault == Some(FaultPoint::WriteCiphertextCorrupted) {
+                let mut corrupted = ciphertext.to_vec();
+                let last = corrupted.len() - 1;
+                corrupted[last] ^= 0x01;
+                return FileSystemStorage.write_ciphertext(file, &corrupted);
+            }
             FileSystemStorage.write_ciphertext(file, ciphertext)
         }
 
         fn sync_file(&self, file: &File) -> io::Result<FileDurability> {
             self.injected(FaultPoint::SyncFile)?;
             FileSystemStorage.sync_file(file)
+        }
+
+        fn read_staging_file(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.injected(FaultPoint::ReadStagingFile)?;
+            FileSystemStorage.read_staging_file(path)
         }
 
         fn replace_destination(&self, staging: &Path, destination: &Path) -> io::Result<()> {

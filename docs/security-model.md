@@ -48,8 +48,13 @@ There are also short-lived copies:
   reported. The frontend copies the returned plaintext into the text view and
   drops it.
 - **At save.** The frontend copies the text view's contents into a
-  `Plaintext` value and hands it to the save. The save drops it (requesting
-  zeroization) as soon as encryption has finished, before any file is created.
+  `Plaintext` value and hands it to the save. The save keeps only a SHA-256
+  digest of it and drops it (requesting zeroization) as soon as encryption has
+  finished, before any file is created. To verify the new file before it
+  replaces the old one, the save decrypts the staging file again; that copy is
+  compared with the digest and dropped at once (see
+  [save-protocol.md](save-protocol.md)). The digest is dropped, requesting
+  zeroization, when verification ends.
 - **Document Info and Go to Line.** The macOS frontend makes a short-lived
   `Plaintext` copy of the whole text to count characters, words and lines for
   the Document Info popover (each time it is shown or refreshed), and to find
@@ -99,6 +104,8 @@ crate takes ownership of the passphrase it uses:
 - a save with a retained passphrase encrypts with a duplicate;
 - a save with a re-entered passphrase uses one copy to check it and one to
   encrypt;
+- every save keeps one more duplicate of the passphrase it encrypted with
+  until it has decrypted the staging file with it (the verification step);
 - a save with a new passphrase (first save, or Change Encryption Password)
   encrypts with a duplicate and keeps the original until the save finishes; it
   is then retained or dropped according to the policy. If the save fails, the
@@ -110,7 +117,9 @@ also passes through the password field of the frontend (an
 control. The frontend empties the field as soon as it takes the passphrase,
 and `Passphrase::from_string` zeroizes the Rust `String` it receives. The
 `NSString` that AppKit returned for the field's value is released normally,
-not zeroized. In the new-password sheet, "Show password" copies the typed
+not zeroized. The unlock sheet's field is also emptied when the sheet closes
+without unlocking (Cancel, closing the window, quitting). In the new-password
+sheet, "Show password" copies the typed
 text between a secure field and a plain text field.
 
 ## Files that are created
@@ -285,11 +294,26 @@ the text to leave the application's process. Grammar checking is off.
 
 The following are disabled in the editor: automatic quote and dash
 substitution, text replacement, automatic spelling correction, automatic link
-and data detection, smart insert and delete, and automatic text completion.
-Silent changes would corrupt passwords and other exact text. Writing Tools
-(macOS 15 and later) are also disabled, because they can send text to other
-processes or services for processing. On older macOS versions, where Writing
-Tools do not exist, the setting is skipped.
+and data detection, smart insert and delete, automatic text completion,
+inline predictions (macOS 14 and later) and math results (macOS 15 and
+later). Silent changes would corrupt passwords and other exact text. Writing
+Tools (macOS 15 and later) are also disabled, because they can send text to
+other processes or services for processing. On older macOS versions, where
+these features do not exist, their settings are skipped.
+
+These settings stay off. The editor's context menu offers only Cut, Copy,
+Paste, Paste and Match Style, and (when spelling is on) the suggestions for a
+misspelled word. The standard text view's Spelling and Grammar and
+Substitutions submenus, which could turn the checkers back on, are removed,
+and so are Look Up, Translate, Search With Google, Share, Services, Speech
+and Font. The actions that would turn a checker on do nothing in the editor,
+wherever they come from, except Check Spelling While Typing, which changes
+the preference, so the Security Inspector's row stays true. The editor offers
+no text to Services, and Look Up (force click, three-finger tap) is turned
+off in it.
+
+Editage does not stop text from being dragged out of the editor into another
+application; dragging is a deliberate act, like copying.
 
 ## Filesystem assumptions
 

@@ -7,15 +7,20 @@
 //!
 //! Guarantee: before [`SaveStage::ReplacingOriginal`] succeeds, the previous
 //! encrypted file is never opened for writing, truncated, or renamed. Every
-//! failure before that point leaves it byte-for-byte unchanged.
+//! failure before that point leaves it byte-for-byte unchanged. Nothing
+//! replaces it unless [`SaveStage::Verifying`] has read the new file back and
+//! decrypted it to the text being saved.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::crypto::{encrypt_document, EncryptionFormat, PassphraseVerifier};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
+
+use crate::crypto::{decrypt_document, encrypt_document, EncryptionFormat, PassphraseVerifier};
 use crate::diagnostics::{DiagnosticEvent, DiagnosticLog};
-use crate::error::EditorError;
+use crate::error::{EditorError, VerificationProblem};
 use crate::secrets::{Credential, Plaintext};
 use crate::storage::{
     staging_path_for, CiphertextFingerprint, DirectoryDurability, FileDurability, FileIdentity,
@@ -31,19 +36,21 @@ pub enum SaveStage {
     CreatingStagingFile,
     WritingCiphertext,
     Flushing,
+    Verifying,
     ReplacingOriginal,
     CleaningUp,
     Complete,
 }
 
 impl SaveStage {
-    pub const ALL: [SaveStage; 9] = [
+    pub const ALL: [SaveStage; 10] = [
         SaveStage::CheckingDestination,
         SaveStage::ConfirmingPassphrase,
         SaveStage::Encrypting,
         SaveStage::CreatingStagingFile,
         SaveStage::WritingCiphertext,
         SaveStage::Flushing,
+        SaveStage::Verifying,
         SaveStage::ReplacingOriginal,
         SaveStage::CleaningUp,
         SaveStage::Complete,
@@ -58,6 +65,7 @@ impl SaveStage {
             SaveStage::CreatingStagingFile => "Creating staging file",
             SaveStage::WritingCiphertext => "Writing encrypted data",
             SaveStage::Flushing => "Flushing to disk",
+            SaveStage::Verifying => "Verifying staging file",
             SaveStage::ReplacingOriginal => "Atomic replacement",
             SaveStage::CleaningUp => "Cleanup",
             SaveStage::Complete => "Complete",
@@ -81,6 +89,9 @@ impl SaveStage {
                 Some("The encrypted result is written to the staging file.")
             }
             SaveStage::Flushing => Some("The staging file is flushed to the disk."),
+            SaveStage::Verifying => Some(
+                "The staging file is read back, checked against the encrypted result, and decrypted with the same password; the decrypted text must match the text being saved.",
+            ),
             SaveStage::ReplacingOriginal => Some(
                 "The file on disk is checked once more, the staging file is given the original file’s permissions, and the original encrypted file is atomically replaced by the staging file.",
             ),
@@ -315,6 +326,10 @@ pub fn run_save_transaction(
 
     // Stage 3: encrypt in memory. Nothing has been written yet.
     enter(SaveStage::Encrypting);
+    // Stage 7 decrypts the staging file with the same credential and compares
+    // the result with this digest, so the plaintext itself need not be kept.
+    let verification_credential = credential.duplicate_for_operation();
+    let text_digest = digest_of_text(&plaintext);
     let ciphertext = match encrypt_document(&plaintext, format, credential) {
         Ok(ciphertext) => ciphertext,
         Err(error) => {
@@ -423,7 +438,30 @@ pub fn run_save_transaction(
         }
     };
 
-    // Stage 7: final check, permissions, then atomic replacement. The rename
+    // Stage 7: read the staging file back and decrypt it. A file that would
+    // not open with the document's passphrase, or would open to different
+    // text, must never replace the original.
+    enter(SaveStage::Verifying);
+    if let Err(error) = verify_staging_file(
+        storage,
+        &staging_path,
+        &ciphertext,
+        format,
+        verification_credential,
+        &text_digest,
+    ) {
+        drop(staging_file);
+        let staging_report = remove_leftover_staging(storage, &staging_path);
+        return Err(fail(
+            SaveStage::Verifying,
+            error,
+            original_if_we_fail,
+            staging_report,
+        ));
+    }
+    drop(text_digest);
+
+    // Stage 8: final check, permissions, then atomic replacement. The rename
     // is the commit point.
     enter(SaveStage::ReplacingOriginal);
     // Checked again here, as late as possible, because encrypting can take
@@ -488,7 +526,7 @@ pub fn run_save_transaction(
         .filter(|snapshot| snapshot.fingerprint == fingerprint)
         .map(|snapshot| snapshot.identity);
 
-    // Stage 8: cleanup.
+    // Stage 9: cleanup.
     enter(SaveStage::CleaningUp);
     let cleanup = if storage.staging_file_exists(&staging_path) {
         match storage.remove_staging_file(&staging_path) {
@@ -613,6 +651,62 @@ fn check_destination(
     }
 }
 
+/// SHA-256 of the text being saved, kept in place of the text for stage 7.
+fn digest_of_text(plaintext: &Plaintext) -> Zeroizing<[u8; 32]> {
+    Zeroizing::new(Sha256::digest(plaintext.as_bytes()).into())
+}
+
+/// Stage 7: reads the staging file back and checks it.
+fn verify_staging_file(
+    storage: &dyn StorageBackend,
+    staging_path: &Path,
+    ciphertext: &[u8],
+    format: EncryptionFormat,
+    credential: Credential,
+    text_digest: &[u8; 32],
+) -> Result<(), EditorError> {
+    let read_back = storage.read_staging_file(staging_path).map_err(|source| {
+        EditorError::StagingFileReadBack {
+            path: staging_path.to_owned(),
+            source,
+        }
+    })?;
+    match verification_problem(&read_back, ciphertext, format, credential, text_digest) {
+        None => Ok(()),
+        Some(problem) => Err(EditorError::StagingFileVerification {
+            path: staging_path.to_owned(),
+            problem,
+        }),
+    }
+}
+
+/// Checks that `read_back` is exactly the ciphertext that was written and
+/// that it decrypts, with the credential it was encrypted with, to text whose
+/// digest is `text_digest`. The decrypted copy is dropped (requesting
+/// zeroization) before this returns.
+fn verification_problem(
+    read_back: &[u8],
+    ciphertext: &[u8],
+    format: EncryptionFormat,
+    credential: Credential,
+    text_digest: &[u8; 32],
+) -> Option<VerificationProblem> {
+    if read_back != ciphertext {
+        return Some(VerificationProblem::ContentsDiffer);
+    }
+    let decrypted = match decrypt_document(read_back, format, credential) {
+        Ok(decrypted) => decrypted,
+        Err(error) => {
+            return Some(VerificationProblem::DoesNotDecrypt {
+                source: Box::new(error),
+            })
+        }
+    };
+    let matches = *digest_of_text(&decrypted) == *text_digest;
+    drop(decrypted);
+    (!matches).then_some(VerificationProblem::TextDiffers)
+}
+
 /// After a failure: removes the staging file if it exists and reports what
 /// happened, so the user can be told exactly what is left on disk.
 fn remove_leftover_staging(
@@ -651,6 +745,80 @@ fn close_file(file: File) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secrets::Passphrase;
+
+    fn credential(passphrase: &str) -> Credential {
+        Credential::Passphrase(Passphrase::from_string(passphrase.to_owned()))
+    }
+
+    fn encrypted(text: &str, passphrase: &str) -> (Vec<u8>, Zeroizing<[u8; 32]>) {
+        let plaintext = Plaintext::from_string(text.to_owned());
+        let ciphertext = encrypt_document(
+            &plaintext,
+            EncryptionFormat::for_new_documents(),
+            credential(passphrase),
+        )
+        .unwrap();
+        (ciphertext, digest_of_text(&plaintext))
+    }
+
+    #[test]
+    fn verification_accepts_a_faithful_staging_file() {
+        let (ciphertext, digest) = encrypted("dummy text", "dummy passphrase");
+        let problem = verification_problem(
+            &ciphertext,
+            &ciphertext,
+            EncryptionFormat::for_new_documents(),
+            credential("dummy passphrase"),
+            &digest,
+        );
+        assert!(problem.is_none(), "{problem:?}");
+    }
+
+    #[test]
+    fn verification_rejects_bytes_that_differ_from_what_was_written() {
+        let (ciphertext, digest) = encrypted("dummy text", "dummy passphrase");
+        let mut read_back = ciphertext.clone();
+        read_back[0] ^= 0x01;
+        let problem = verification_problem(
+            &read_back,
+            &ciphertext,
+            EncryptionFormat::for_new_documents(),
+            credential("dummy passphrase"),
+            &digest,
+        );
+        assert!(matches!(problem, Some(VerificationProblem::ContentsDiffer)));
+    }
+
+    #[test]
+    fn verification_rejects_a_file_that_does_not_open_with_the_save_passphrase() {
+        let (ciphertext, digest) = encrypted("dummy text", "dummy passphrase");
+        let problem = verification_problem(
+            &ciphertext,
+            &ciphertext,
+            EncryptionFormat::for_new_documents(),
+            credential("a different passphrase"),
+            &digest,
+        );
+        assert!(matches!(
+            problem,
+            Some(VerificationProblem::DoesNotDecrypt { .. })
+        ));
+    }
+
+    #[test]
+    fn verification_rejects_a_file_that_decrypts_to_different_text() {
+        let (ciphertext, _) = encrypted("dummy text", "dummy passphrase");
+        let (_, other_digest) = encrypted("other dummy text", "dummy passphrase");
+        let problem = verification_problem(
+            &ciphertext,
+            &ciphertext,
+            EncryptionFormat::for_new_documents(),
+            credential("dummy passphrase"),
+            &other_digest,
+        );
+        assert!(matches!(problem, Some(VerificationProblem::TextDiffers)));
+    }
 
     #[test]
     fn mechanism_steps_follow_stage_order_and_mention_the_atomic_replacement() {

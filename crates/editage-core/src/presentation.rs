@@ -175,6 +175,19 @@ pub fn save_failure_report(failure: &SaveFailure, session: &DocumentSession) -> 
                     "The encrypted staging file was complete, but its permissions could not be set to match the original file, so the original was not replaced."
                         .to_owned(),
                 );
+            } else if let EditorError::StagingFileVerification { problem, .. } = other {
+                message.insert(
+                    0,
+                    "The newly written encrypted file did not pass verification, so it did not replace the existing file."
+                        .to_owned(),
+                );
+                message.push(format!("Verification found that {problem}."));
+            } else if failure.stage == SaveStage::Verifying {
+                message.insert(
+                    0,
+                    "The newly written encrypted file could not be read back for verification, so it did not replace the existing file."
+                        .to_owned(),
+                );
             } else if failure.stage == SaveStage::ReplacingOriginal && other.io_error().is_some() {
                 message.insert(
                     0,

@@ -36,7 +36,8 @@ The core handles plaintext at two moments only:
 - **Save.** The frontend copies the text view's current text into a
   `Plaintext` and passes it to `DocumentSession::begin_save`. The save
   transaction drops it immediately after encryption, before any file is
-  touched.
+  touched, keeping only a SHA-256 digest with which it checks the staging
+  file's decrypted contents before the rename.
 
 The macOS frontend also takes short-lived `Plaintext` copies for the Document
 Info counts and for Go to Line; they are dropped as soon as they are used.

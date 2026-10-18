@@ -44,7 +44,8 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       With it off, the Security Inspector's Passphrase row says "Not retained
       after unlock. You will be asked again when saving." and the next ⌘S asks
       for the password ("Enter the password for “…”").
-- [ ] Cancel on the unlock sheet closes the window.
+- [ ] Cancel on the unlock sheet closes the window. Type a password, then
+      Cancel: reopening the file shows an empty password field.
 - [ ] A file encrypted to an age recipient (public key) is refused with an
       explanation that only passphrase-protected files are supported.
 - [ ] A non-age file is refused ("It is not an age encrypted file. Detected:
@@ -60,6 +61,8 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       "Saved locally at <time>".
 - [ ] `age --decrypt ~/Desktop/test.txt.age` in Terminal prints the saved text.
 - [ ] After saving, `ls -la ~/Desktop` shows no `.test.txt.age.*.tmp` file.
+- [ ] A save takes about twice as long as an unlock: it runs scrypt twice, to
+      encrypt and then to verify the new file by decrypting it.
 - [ ] Undoing back to the saved text still shows "— Edited" (expected; see
       docs/document-lifecycle.md).
 - [ ] Closing a window with unsaved changes asks "Do you want to save the
@@ -198,7 +201,11 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
       work.
 - [ ] View › Go to Line… (⌘L) selects the requested line; View › Document Info
       (⌘I) shows character, word and line counts.
-- [ ] The context menu appears and offers the usual text actions.
+- [ ] The context menu offers only Cut, Copy, Paste and Paste and Match Style
+      (plus suggestions on a misspelled word when spelling is on). There is no
+      Spelling and Grammar, Substitutions, Look Up, Translate, Search With
+      Google, Share, Services, Speech or Font item.
+- [ ] A force click or three-finger tap on a word shows no Look Up panel.
 - [ ] Automatic changes are off: type `"password" -- test` and check it is
       unchanged; misspelled words are underlined but not corrected. On
       macOS 15 and later, Writing Tools are not offered.

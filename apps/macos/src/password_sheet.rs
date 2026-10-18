@@ -7,7 +7,7 @@
 //! cannot be zeroized by this application; see docs/security-model.md.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use editage_core::secrets::Passphrase;
 use objc2::rc::Retained;
@@ -67,7 +67,11 @@ pub struct UnlockSheet {
 }
 
 impl UnlockSheet {
+    /// Closes the sheet. The field is emptied first, so a password typed but
+    /// never submitted (Cancel, closing the window, quitting) is not left
+    /// in it.
     pub fn close(&self) {
+        self.field.setStringValue(&ns(""));
         self.sheet.close();
     }
 
@@ -165,11 +169,14 @@ pub fn present_unlock_sheet(
     spinner.setHidden(true);
 
     let on_unlock = Rc::new(on_unlock);
-    let state: Rc<RefCell<Option<Rc<UnlockSheet>>>> = Default::default();
+    // The controls' closures refer to the sheet weakly. The sheet owns the
+    // field observer, so a strong reference from the observer's closure
+    // would keep the sheet, its field and the window alive forever.
+    let state: Rc<RefCell<Weak<UnlockSheet>>> = Default::default();
 
     let unlock_state = state.clone();
     let unlock_button = button("Unlock", &sheet.bag, mtm, move || {
-        let Some(this) = unlock_state.borrow().clone() else {
+        let Some(this) = unlock_state.borrow().upgrade() else {
             return;
         };
         if field_is_empty(&this.field) {
@@ -184,7 +191,11 @@ pub fn present_unlock_sheet(
     make_default(&unlock_button);
     unlock_button.setEnabled(false);
 
-    let cancel_button = button("Cancel", &sheet.bag, mtm, on_cancel);
+    let cancel_field = field.clone();
+    let cancel_button = button("Cancel", &sheet.bag, mtm, move || {
+        cancel_field.setStringValue(&ns(""));
+        on_cancel();
+    });
     make_cancel(&cancel_button);
 
     let row = button_row(&[&spinner], &[&cancel_button, &unlock_button], mtm);
@@ -192,7 +203,7 @@ pub fn present_unlock_sheet(
 
     let enable_state = state.clone();
     let observer = FieldObserver::new(mtm, move || {
-        if let Some(this) = enable_state.borrow().as_ref() {
+        if let Some(this) = enable_state.borrow().upgrade() {
             this.unlock_button.setEnabled(!field_is_empty(&this.field));
         }
     });
@@ -209,7 +220,7 @@ pub fn present_unlock_sheet(
         remember,
         observer,
     });
-    *state.borrow_mut() = Some(this.clone());
+    *state.borrow_mut() = Rc::downgrade(&this);
     sheet.show();
     sheet.make_first_responder(&field);
     this

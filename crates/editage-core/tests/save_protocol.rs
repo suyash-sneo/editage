@@ -10,7 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use common::*;
 use editage_core::document::{DocumentState, PassphrasePolicy, SaveCredential, SaveTarget};
-use editage_core::error::EditorError;
+use editage_core::error::{EditorError, VerificationProblem};
 use editage_core::save::{CleanupResult, OriginalFileState, SaveStage};
 use editage_core::storage::{
     ConcurrentChange, FaultInjectingStorage, FaultPoint, FileSystemStorage,
@@ -98,6 +98,38 @@ fn original_survives_flush_failure() {
     let (fixture, failure) = failing_save(FaultPoint::SyncFile);
     assert_eq!(failure.stage, SaveStage::Flushing);
     assert!(matches!(failure.error, EditorError::Flush { .. }));
+    assert_original_intact(&fixture);
+    assert_no_staging_files_left(&fixture);
+}
+
+#[test]
+fn corrupted_staging_file_never_replaces_the_original() {
+    let (fixture, failure) = failing_save(FaultPoint::WriteCiphertextCorrupted);
+    assert_eq!(failure.stage, SaveStage::Verifying);
+    assert!(matches!(
+        failure.error,
+        EditorError::StagingFileVerification {
+            problem: VerificationProblem::ContentsDiffer,
+            ..
+        }
+    ));
+    assert_eq!(failure.original, OriginalFileState::Unchanged);
+    let staging = failure.staging_file.as_ref().expect("staging report");
+    assert!(staging.removal_attempted);
+    assert!(!staging.still_exists);
+    assert_original_intact(&fixture);
+    assert_no_staging_files_left(&fixture);
+}
+
+#[test]
+fn original_survives_when_the_staging_file_cannot_be_read_back() {
+    let (fixture, failure) = failing_save(FaultPoint::ReadStagingFile);
+    assert_eq!(failure.stage, SaveStage::Verifying);
+    assert!(matches!(
+        failure.error,
+        EditorError::StagingFileReadBack { .. }
+    ));
+    assert_eq!(failure.original, OriginalFileState::Unchanged);
     assert_original_intact(&fixture);
     assert_no_staging_files_left(&fixture);
 }
@@ -356,6 +388,8 @@ fn interrupted_save_before_commit_leaves_original_valid() {
         FaultPoint::CreateStagingFile,
         FaultPoint::WriteCiphertextPartially,
         FaultPoint::SyncFile,
+        FaultPoint::WriteCiphertextCorrupted,
+        FaultPoint::ReadStagingFile,
         FaultPoint::ReplaceDestination,
     ] {
         let (fixture, _) = failing_save(fault);
@@ -560,6 +594,7 @@ fn stages_are_reported_in_order() {
             SaveStage::CreatingStagingFile,
             SaveStage::WritingCiphertext,
             SaveStage::Flushing,
+            SaveStage::Verifying,
             SaveStage::ReplacingOriginal,
             SaveStage::CleaningUp,
             SaveStage::Complete,

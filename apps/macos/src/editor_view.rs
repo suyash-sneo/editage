@@ -6,7 +6,10 @@
 //! - reports copies so the clipboard tracker knows what it owns
 //!   (`copy:` and `cut:`),
 //! - turns off automatic text changes that would corrupt passwords or send
-//!   text elsewhere.
+//!   text elsewhere, and keeps them off: the context menu is cut down to
+//!   editing and spelling suggestions, the `toggle…:` actions that would turn
+//!   a checker back on do nothing (spelling goes through the preference),
+//!   and Services and Look Up get no text from this view.
 //!
 //! The text storage of this view is where the plaintext lives while a
 //! document is unlocked. Converting between `NSString` and Rust `String`
@@ -17,11 +20,12 @@ use std::cell::RefCell;
 use editage_core::preferences::{EditorFont, Preferences};
 use editage_core::secrets::Plaintext;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBorderType, NSFont, NSFontWeightRegular, NSMutableParagraphStyle,
-    NSResponder, NSScrollView, NSText, NSTextView, NSView,
+    NSAutoresizingMaskOptions, NSBorderType, NSEvent, NSFont, NSFontWeightRegular, NSMenu,
+    NSMutableParagraphStyle, NSPasteboardType, NSResponder, NSScrollView, NSText, NSTextView,
+    NSView,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize};
 
@@ -78,8 +82,150 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), cut: sender] };
             self.notify_copy();
         }
+
+        // SAFETY: `- (NSMenu *)menuForEvent:(NSEvent *)event`; the menu is
+        // returned retained-autoreleased as the superclass returned it.
+        #[unsafe(method_id(menuForEvent:))]
+        fn menu_for_event(&self, event: &NSEvent) -> Option<Retained<NSMenu>> {
+            // SAFETY: forwarding the same argument to the superclass.
+            let menu: Option<Retained<NSMenu>> =
+                unsafe { msg_send![super(self), menuForEvent: event] };
+            if let Some(menu) = &menu {
+                restrict_context_menu(menu);
+            }
+            menu
+        }
+
+        // SAFETY: `- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event`.
+        #[unsafe(method(willOpenMenu:withEvent:))]
+        fn will_open_menu(&self, menu: &NSMenu, event: &NSEvent) {
+            // SAFETY: forwarding the same arguments to the superclass.
+            let _: () = unsafe { msg_send![super(self), willOpenMenu: menu, withEvent: event] };
+            // AppKit may add items (such as Services) after `menuForEvent:`.
+            restrict_context_menu(menu);
+        }
+
+        // Services would hand the selected text to another application.
+        // SAFETY: `- (id)validRequestorForSendType:returnType:`; returning
+        // nil means "no requestor" and is always allowed.
+        #[unsafe(method(validRequestorForSendType:returnType:))]
+        fn valid_requestor(
+            &self,
+            _send_type: Option<&NSPasteboardType>,
+            _return_type: Option<&NSPasteboardType>,
+        ) -> *mut AnyObject {
+            std::ptr::null_mut()
+        }
+
+        // Look Up (force click, three-finger tap) can query online sources
+        // with the text under the pointer.
+        // SAFETY: `- (void)quickLookWithEvent:(NSEvent *)event`.
+        #[unsafe(method(quickLookWithEvent:))]
+        fn quick_look_with_event(&self, _event: &NSEvent) {}
+
+        // SAFETY: standard action signature.
+        #[unsafe(method(quickLookPreviewItems:))]
+        fn quick_look_preview_items(&self, _sender: Option<&AnyObject>) {}
+
+        // Spelling is a preference (Edit › Spelling and Grammar), so that the
+        // Security Inspector reports it truthfully and the size limit applies.
+        // SAFETY: standard action signature.
+        #[unsafe(method(toggleContinuousSpellChecking:))]
+        fn toggle_continuous_spell_checking(&self, _sender: Option<&AnyObject>) {
+            // Applying preferences reconfigures this view; do it after the
+            // action has returned.
+            crate::app::defer_on_main_thread(Box::new(|| {
+                crate::app::app().update_preferences(|p| {
+                    p.check_spelling_while_typing = !p.check_spelling_while_typing
+                })
+            }));
+        }
+
+        // The checkers and substitutions below stay off (see
+        // `configure_text_behaviour`). Their toggles do nothing, wherever
+        // they are sent from (Substitutions panel, other menus).
+        // SAFETY (each): standard action signature.
+        #[unsafe(method(toggleGrammarChecking:))]
+        fn toggle_grammar_checking(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticSpellingCorrection:))]
+        fn toggle_automatic_spelling_correction(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticTextReplacement:))]
+        fn toggle_automatic_text_replacement(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticQuoteSubstitution:))]
+        fn toggle_automatic_quote_substitution(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticDashSubstitution:))]
+        fn toggle_automatic_dash_substitution(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticLinkDetection:))]
+        fn toggle_automatic_link_detection(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticDataDetection:))]
+        fn toggle_automatic_data_detection(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleSmartInsertDelete:))]
+        fn toggle_smart_insert_delete(&self, _sender: Option<&AnyObject>) {}
+
+        #[unsafe(method(toggleAutomaticTextCompletion:))]
+        fn toggle_automatic_text_completion(&self, _sender: Option<&AnyObject>) {}
     }
 );
+
+/// Context menu items that are kept: editing, and the suggestions AppKit
+/// offers for a misspelled word when spelling is on. Everything else (Look
+/// Up, Translate, Search With Google, Share, Services, Speech, Font, and the
+/// Spelling and Grammar and Substitutions submenus, whose toggles would turn
+/// checkers back on) is removed.
+fn kept_context_actions() -> [Sel; 7] {
+    [
+        sel!(cut:),
+        sel!(copy:),
+        sel!(paste:),
+        sel!(pasteAsPlainText:),
+        sel!(selectAll:),
+        sel!(_changeSpellingFromMenu:),
+        sel!(_ignoreSpellingFromMenu:),
+    ]
+}
+
+fn restrict_context_menu(menu: &NSMenu) {
+    let kept = kept_context_actions();
+    for index in (0..menu.numberOfItems()).rev() {
+        let Some(item) = menu.itemAtIndex(index) else {
+            continue;
+        };
+        let keep = item.isSeparatorItem()
+            || (!item.hasSubmenu() && item.action().is_some_and(|action| kept.contains(&action)));
+        if !keep {
+            menu.removeItemAtIndex(index);
+        }
+    }
+    // Remove leading, trailing and repeated separators left behind.
+    let mut previous_was_separator = true;
+    let mut index = 0;
+    while index < menu.numberOfItems() {
+        let is_separator = menu
+            .itemAtIndex(index)
+            .is_some_and(|item| item.isSeparatorItem());
+        if is_separator && previous_was_separator {
+            menu.removeItemAtIndex(index);
+        } else {
+            previous_was_separator = is_separator;
+            index += 1;
+        }
+    }
+    let count = menu.numberOfItems();
+    if count > 0
+        && menu
+            .itemAtIndex(count - 1)
+            .is_some_and(|item| item.isSeparatorItem())
+    {
+        menu.removeItemAtIndex(count - 1);
+    }
+}
 
 impl EditorTextView {
     fn notify_copy(&self) {
@@ -271,6 +417,19 @@ fn configure_text_behaviour(text_view: &EditorTextView) {
     text_view.setSmartInsertDeleteEnabled(false);
     text_view.setGrammarCheckingEnabled(false);
     text_view.setAutomaticTextCompletionEnabled(false);
+
+    // Inline predictions (macOS 14+) and math results (macOS 15+) insert
+    // text the user did not type when Tab or Return accepts them. The
+    // selectors do not exist on older macOS, so check before calling.
+    // NSTextInputTraitTypeNo = 1
+    if text_view.respondsToSelector(sel!(setInlinePredictionType:)) {
+        // SAFETY: the selector exists (checked above) and takes an NSInteger.
+        let _: () = unsafe { msg_send![text_view, setInlinePredictionType: 1isize] };
+    }
+    if text_view.respondsToSelector(sel!(setMathExpressionCompletionType:)) {
+        // SAFETY: the selector exists (checked above) and takes an NSInteger.
+        let _: () = unsafe { msg_send![text_view, setMathExpressionCompletionType: 1isize] };
+    }
 
     // Writing Tools (macOS 15+) can send selected text to Apple's servers.
     // It is disabled for document text. The selector does not exist on

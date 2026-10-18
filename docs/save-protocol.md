@@ -16,6 +16,10 @@ Before the atomic replacement succeeds, the previous encrypted file is never
 opened for writing, truncated, or renamed. Every failure before that point
 leaves it byte-for-byte unchanged.
 
+The new file replaces the previous one only after it has been read back from
+the staging file, found identical to the ciphertext that was written, and
+decrypted with the same passphrase to the text being saved (stage 7).
+
 ## Inputs
 
 A save runs from a `SaveJob`, built on the UI thread by
@@ -75,7 +79,7 @@ Security Inspector.
 4. The **final permission bits** are chosen: the read, write and execute
    bits of the existing file (`st_mode & 0o777`; set-user-ID, set-group-ID
    and sticky bits are not carried over), or `0600` if there is none. They are
-   applied in stage 7.
+   applied in stage 8.
 
 ### 2. Confirming passphrase (`ConfirmingPassphrase`)
 
@@ -91,10 +95,12 @@ Change Encryption Password), skips this stage.
 ### 3. Encryption (`Encrypting`)
 
 The text is encrypted in memory into a complete age file, with scrypt work
-factor 2^18. Immediately afterwards, **the transaction's copy of the plaintext
-is dropped** (requesting zeroization), before any file is created. The
-SHA-256 fingerprint of the new ciphertext and a new `PassphraseVerifier`
-(from the new header) are computed. Nothing has been written to disk yet.
+factor 2^18. Just before, a SHA-256 digest of the text and a duplicate of the
+credential are taken for stage 7. Immediately after encryption, **the
+transaction's copy of the plaintext is dropped** (requesting zeroization),
+before any file is created. The SHA-256 fingerprint of the new ciphertext and
+a new `PassphraseVerifier` (from the new header) are computed. Nothing has
+been written to disk yet.
 
 ### 4. Creating staging file (`CreatingStagingFile`)
 
@@ -117,9 +123,34 @@ retries short writes and interruptions) and the handle's buffer is flushed.
 
 The staging file is flushed to storage before it can replace anything. See
 [Durability](#durability) for what this means on each platform. The handle
-stays open for stage 7.
+stays open until stage 8.
 
-### 7. Atomic replacement (`ReplacingOriginal`)
+### 7. Verifying staging file (`Verifying`)
+
+1. The staging file is **read back** through a new handle, by its path (the
+   path that stage 8 renames). The bytes are what the filesystem returns; they
+   may come from the operating system's cache rather than from the drive
+   itself.
+2. They must be **identical to the ciphertext** that was written. If not, the
+   save fails with `StagingFileVerification` (`ContentsDiffer`).
+3. They are **decrypted with the same credential** that encrypted them (a
+   second scrypt derivation, about as long as encrypting). If this fails, the
+   save fails with `StagingFileVerification` (`DoesNotDecrypt`): a file that
+   would not open with the document's passphrase never replaces the original.
+4. The SHA-256 digest of the decrypted text must equal the digest taken in
+   stage 3. If not, the save fails with `StagingFileVerification`
+   (`TextDiffers`). The decrypted copy is dropped (requesting zeroization) as
+   soon as it has been compared, and the digest and the credential duplicate
+   are dropped when the stage ends.
+
+If the file cannot be read back, the save fails with `StagingFileReadBack`.
+In every case the staging file is removed and the original is unchanged.
+
+This checks that the file decrypts with the passphrase the save used. It
+cannot tell whether that passphrase is the one the user meant: a new
+passphrase typed the same wrong way twice is still a valid passphrase.
+
+### 8. Atomic replacement (`ReplacingOriginal`)
 
 1. **The destination is checked again**, exactly as in stage 1 (including a
    full re-read and fingerprint). Encryption takes about a second, and a sync
@@ -146,14 +177,14 @@ A small window remains between the check in step 1 and the rename in step 3
 (it includes applying the permissions and closing the handle).
 POSIX has no "replace only if unchanged" operation.
 
-### 8. Cleanup (`CleaningUp`)
+### 9. Cleanup (`CleaningUp`)
 
 If a file still exists at the staging path, it is removed. After a normal
 rename there is nothing left (`CleanupResult::NothingLeft`). If removal fails,
 the save is still successful; see
 [Cleanup failure after a successful save](#cleanup-failure-after-a-successful-save).
 
-### 9. Complete (`Complete`)
+### 10. Complete (`Complete`)
 
 The result (`SaveSuccess`) carries the new fingerprint, identity and
 verifier, the ciphertext size, the durability achieved, and the cleanup
@@ -177,6 +208,8 @@ unchanged by this application.
 | Creating staging file | cannot create, e.g. folder not writable (`StagingFileCreate`) | Unchanged or did not exist | removed if it appeared | "The document could not be saved." with a one-line cause, e.g. no permission to write in the folder. |
 | Writing encrypted data | write error, e.g. disk full (`StagingFileWrite`) | Unchanged or did not exist | partial file removed | as above, e.g. "The disk … is full." |
 | Flushing to disk | flush error (`Flush`) | Unchanged or did not exist | removed | as above |
+| Verifying staging file | cannot read it back (`StagingFileReadBack`) | Unchanged or did not exist | removed | "The newly written encrypted file could not be read back for verification, so it did not replace the existing file." with a one-line cause. |
+| Verifying staging file | bytes differ, does not decrypt, or decrypts to other text (`StagingFileVerification`) | Unchanged or did not exist | removed | "The newly written encrypted file did not pass verification, so it did not replace the existing file." and which check failed. |
 | Atomic replacement | second check fails (`ExternalModification`, `DestinationMissing`, …) | as in stage 1 | removed | as in stage 1 |
 | Atomic replacement | permissions cannot be applied (`Permissions`) | Unchanged or did not exist | removed | "The encrypted staging file was complete, but its permissions could not be set to match the original file, so the original was not replaced." |
 | Atomic replacement | `rename` fails (`AtomicReplace`) | Unchanged or did not exist | removed | "Encryption completed successfully, but the encrypted staging file could not replace the existing file." |
@@ -255,6 +288,7 @@ fails, the queued request is dropped and the user sees the failure. See
 | stage order; no file operation before encryption | `stages_are_reported_in_order` |
 | failure at each pre-commit step leaves the original intact | `original_survives_staging_file_creation_failure`, `original_survives_staging_write_failure_and_partial_staging_file_is_removed`, `original_survives_flush_failure`, `original_survives_permission_failure_before_replacement`, `original_survives_replacement_failure`, `original_survives_a_failure_before_encryption_output_exists`, `interrupted_save_before_commit_leaves_original_valid` |
 | complete ciphertext exists before replacement | `complete_ciphertext_is_written_before_destination_is_replaced` |
+| the staging file is verified before replacement | `corrupted_staging_file_never_replaces_the_original`, `original_survives_when_the_staging_file_cannot_be_read_back`, `save::tests::verification_accepts_a_faithful_staging_file`, `save::tests::verification_rejects_bytes_that_differ_from_what_was_written`, `save::tests::verification_rejects_a_file_that_does_not_open_with_the_save_passphrase`, `save::tests::verification_rejects_a_file_that_decrypts_to_different_text` (unit tests) |
 | staging file holds ciphertext only | `staging_file_contains_ciphertext_not_plaintext_buffer` |
 | external change detected at the start and before the rename | `external_modification_prevents_overwrite`, `stale_fingerprint_blocks_replacement_when_file_changes_during_the_save` |
 | leftover staging file reported with its path | `staging_file_that_cannot_be_removed_after_a_failure_is_reported_with_its_path` |
