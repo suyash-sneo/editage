@@ -21,6 +21,19 @@ cargo run -p editage-macos -- ~/Desktop/test.txt.age
 
 ## Launch
 
+For a release, test the installed app from the disk image
+(`packaging/macos/build-app.sh`, or the Release workflow's artifact):
+
+- [ ] The disk image shows Editage and an Applications link; the copied app
+      launches from Applications and Finder shows it as version
+      `<version>`.
+- [ ] Double-clicking a `.age` file in Finder (and Open With › Editage) opens
+      it locked, with the unlock sheet.
+- [ ] `defaults read io.github.suyash-sneo.editage` lists the settings after
+      changing one.
+- [ ] Logging out with unsaved changes asks about them instead of quitting
+      silently.
+
 - [ ] Launching with no arguments and no documents to reopen shows the welcome
       window with "Open…", "New Document", the recent documents list, and a
       "Remember recent documents" checkbox.

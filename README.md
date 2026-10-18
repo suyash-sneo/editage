@@ -88,6 +88,42 @@ decrypts Editage's own output with the reference `age` command.
   hand before a release or after a UI change.
 - [Security policy](SECURITY.md) and [contributing guide](CONTRIBUTING.md).
 
+## Installing
+
+Editage runs on Apple silicon Macs with macOS 13 or later. Each published
+release has a disk image, `Editage-<version>-arm64.dmg`, built by the
+[Release workflow](.github/workflows/release.yml) from the tagged commit,
+with its SHA-256 checksum beside it.
+
+The app is signed ad hoc, not with an Apple Developer ID, and it is not
+notarized, so macOS cannot tell who built it. Downloading with the GitHub
+command-line tool does not mark the file as downloaded from the internet, so
+macOS opens the app without a Gatekeeper prompt:
+
+```sh
+gh release download --repo suyash-sneo/editage --pattern 'Editage-*-arm64.dmg*'
+shasum -a 256 -c Editage-*-arm64.dmg.sha256
+open Editage-*-arm64.dmg      # then drag Editage to Applications
+```
+
+A build of the Release workflow started by hand (not from a tag) is attached
+to its run instead of to a release; download it with
+`gh run download <run id> --repo suyash-sneo/editage --name Editage-macos-arm64`.
+
+If you download it with a web browser instead, macOS refuses to open the app
+the first time. Open System Settings › Privacy & Security and choose
+**Open Anyway** for Editage, or remove the download mark yourself:
+`xattr -dr com.apple.quarantine /Applications/Editage.app`.
+
+To build the same disk image locally (it is written to `target/dist/`):
+
+```sh
+packaging/macos/build-app.sh
+```
+
+The installed app opens `.age` files from Finder (double-click, or Open With)
+and declares itself the default editor for them.
+
 ## Building
 
 Requirements:
@@ -107,10 +143,9 @@ To open files directly, pass their paths; they open as with File › Open…
 cargo run -p editage-macos -- path/to/notes.txt.age
 ```
 
-The executable is named `Editage`. There is no script to build an `.app`
-bundle, so the application runs as an unbundled executable. One visible
-consequence is where macOS keeps its preferences; see
-[platform notes](docs/platform-notes.md).
+`cargo run` starts the executable (named `Editage`) without an `.app`
+bundle. It then keeps its preferences in a different place from the
+installed app; see [platform notes](docs/platform-notes.md#preferences).
 
 ## Testing
 

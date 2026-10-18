@@ -42,18 +42,40 @@ Minimum version: macOS 13.
 ### Preferences
 
 Preferences are stored with `NSUserDefaults`, using the keys in
-`editage_core::preferences::keys`. The application runs as an unbundled
-executable (there is no `.app` bundle), so it has no bundle identifier, and
-the defaults domain is the executable name: **`Editage`**,
-stored in `~/Library/Preferences/Editage.plist`. You can inspect it with:
+`editage_core::preferences::keys`. The defaults domain depends on how
+Editage is started:
 
-```sh
-defaults read Editage
-```
+- **Installed app** (`Editage.app`, built by `packaging/macos/build-app.sh`):
+  the bundle identifier, **`io.github.suyash-sneo.editage`**, stored in
+  `~/Library/Preferences/io.github.suyash-sneo.editage.plist`. Inspect it
+  with `defaults read io.github.suyash-sneo.editage`.
+- **Unbundled executable** (`cargo run`): there is no bundle identifier, so
+  the domain is the executable name, **`Editage`**
+  (`defaults read Editage`).
 
-If the application is packaged as a bundle, the domain becomes the bundle
-identifier and the file name changes accordingly; existing preferences then
-need to be migrated or are reset.
+The two are separate: settings, recent documents and documents to reopen
+made in one are not seen by the other. Nothing is migrated between them.
+
+### App bundle
+
+`packaging/macos/build-app.sh` builds `Editage.app` for `aarch64-apple-darwin`
+from `packaging/macos/Info.plist`, signs it ad hoc with the hardened runtime
+(`codesign --sign - --options runtime`), and packs it into a disk image with
+`hdiutil`. The Release workflow runs the same script. Notes:
+
+- **No Developer ID, no notarization.** Gatekeeper treats a browser download
+  as from an unidentified developer; see README.md › Installing.
+- **Document type.** `.age` has no system type identifier, so the bundle
+  declares one as an imported type (`io.github.suyash-sneo.editage.age`,
+  conforming to `public.data`) and registers as its default editor. Files
+  opened from Finder arrive through `application:openURLs:` and open locked,
+  like File › Open….
+- **No sudden or automatic termination** (`NSSupportsSuddenTermination` and
+  `NSSupportsAutomaticTermination` are false), so macOS asks the app before
+  quitting it and unsaved edits get the usual prompt.
+- **No sandbox.** The app is not sandboxed; it reads and writes the files and
+  folders you choose, plus staging files beside them.
+- **No icon** yet; Finder shows the generic application icon.
 
 Other state that macOS keeps for the application:
 

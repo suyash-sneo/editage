@@ -49,15 +49,20 @@ Docs, and when to update them (same change as the code):
 ```sh
 cargo build
 cargo run -p editage-macos -- [file.age ...]      # binary `Editage`, unbundled
+packaging/macos/build-app.sh                       # Editage.app + .dmg in target/dist (arm64)
 cargo test --workspace -- --include-ignored        # needs `brew install age` and `expect`
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 tests/fixtures/generate-fixtures.sh                # regenerate interop fixtures (needs age, age-keygen, expect)
 ```
 
-Preferences live in the `Editage` defaults domain (`defaults read Editage`).
+Preferences live in the `io.github.suyash-sneo.editage` defaults domain for
+the installed app and in `Editage` for `cargo run`.
 CI runs on every push and pull request: macOS (fmt, clippy, all tests, release
-build), Linux (core tests only) and cargo-deny.
+build), Linux (core tests only) and cargo-deny. The Release workflow
+(`.github/workflows/release.yml`, manual or on a `v*` tag) builds the `.dmg`;
+a tag also publishes it as a GitHub release. Bundle settings are in
+`packaging/macos/Info.plist`.
 
 ## Invariants and rules
 
