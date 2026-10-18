@@ -17,7 +17,12 @@ no-default-features = false
 version = 2
 yanked = "deny"
 # Any advisory that must be ignored is listed here with the reason.
-ignore = []
+ignore = [
+    # proc-macro-error2 is unmaintained. It reaches the graph only as a
+    # compile-time procedural macro (age -> i18n-embed-fl), so none of its
+    # code runs in Editage. Remove when age drops it.
+    { id = "RUSTSEC-2026-0173", reason = "unmaintained compile-time proc macro via age; no runtime code" },
+]
 
 [licenses]
 version = 2

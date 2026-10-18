@@ -868,6 +868,9 @@ impl DocumentWindow {
 
     /// Copies the editor text and starts the save transaction off the main
     /// thread.
+    // The background closure returns `run_save_transaction`'s result as is;
+    // see the note on that function about the size of `SaveFailure`.
+    #[allow(clippy::result_large_err)]
     fn start_save(self: &Rc<Self>, target: SaveTarget, credential: SaveCredential) {
         // The one deliberate plaintext copy of a save: taken here, moved into
         // the job, zeroized right after encryption.
